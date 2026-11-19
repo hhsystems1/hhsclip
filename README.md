@@ -23,6 +23,8 @@ your computer.
    `--url` to the CLI.
 2. **Transcribe locally** — `faster-whisper` (tiny model by default,
    CPU-friendly) with word timestamps. No audio is sent anywhere.
+   (On a phone in Termux, `whisper-cli` instead — same job, different
+   engine; see [TERMUX.md](TERMUX.md).)
 3. **Score, in two modes** (`--mode gameplay|talking|auto`):
    - **gameplay** — audio-energy / loudness spikes, excited speech
      (keywords, exclamations, laughter), speech-density changes.
@@ -79,6 +81,17 @@ python3 server.py
 
 The app is phone-first (390px): big Approve / Reject buttons, video
 preview per clip, editable title/description.
+
+## Run it on your phone (Termux)
+
+The whole app can run on an Android phone inside Termux — no computer
+needed. The phone is slower than the Mac mini (roughly real-time
+transcription, tiny model only), but it works: same app, same
+approval flow. The one change is the transcription engine:
+`faster-whisper` has no Android version, so on the phone the clipper
+uses `whisper-cli` instead, picked automatically. Full steps, the
+ready-made ARM64 binary, and the honest differences are in
+[TERMUX.md](TERMUX.md).
 
 ## Run the clipper from the command line
 

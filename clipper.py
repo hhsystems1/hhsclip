@@ -17,6 +17,17 @@ Modes (--mode gameplay|talking|auto, default auto):
   --mode talking with no transcript falls back to gameplay scoring
   and says so in the manifest.
 
+Transcription backends (--transcriber auto|faster-whisper|whisper-cpp,
+default auto):
+- faster-whisper: the Python library, the default on a desktop
+  (pip install faster-whisper). Needs numpy + PyAV.
+- whisper-cpp: the whisper.cpp CLI (`whisper-cli`), the Termux path —
+  faster-whisper has no Android wheels, so on a phone the clipper
+  shells out to whisper-cli and reads its JSON output. The model is
+  a ggml file, `models/ggml-<model>.bin` by default (see --model-path).
+  auto picks faster-whisper when it imports, else whisper-cli when
+  it is on PATH.
+
 Own-content gate: every job needs --i-own-it. Without it the job is
 refused before anything is downloaded or cut. This app is for your
 own videos only.
@@ -170,6 +181,230 @@ def transcribe(wav_path, model, language):
         for wd in (s.words or []):
             words.append({"start": float(wd.start), "end": float(wd.end),
                           "word": wd.word.strip()})
+    print(f"  transcript: {len(words)} words, {len(segs)} segments")
+    return words, segs
+
+
+# --- whisper.cpp backend (the Termux path) ---
+
+# Where to get a ggml model file. faster-whisper downloads its models
+# itself; whisper-cli needs the file on disk, and this is the plain
+# answer when it is missing.
+WHISPER_CPP_MODEL_URL = ("https://huggingface.co/ggerganov/whisper.cpp"
+                         "/resolve/main/ggml-{model}.bin")
+
+# Tokens whisper.cpp emits that are not speech — never let them into
+# the transcript as words.
+_SPECIAL_TOKENS = ("[_BEG_]", "<|endoftext|>", "<|startoftranscript|>",
+                   "<|notimestamps|>")
+# Sound annotations, not speech: [Music], [Applause], [Laughter]...
+# (whisper.cpp emits these as word-length entries spanning seconds).
+_BRACKETED_RE = re.compile(r"^[\[(].*[\])]$")
+
+
+def _faster_whisper_available():
+    try:
+        import faster_whisper  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def resolve_transcriber(requested):
+    """Pick the transcription backend.
+
+    auto: faster-whisper when it imports, else whisper-cli when it is
+    on PATH. An explicit backend that is not available fails fast with
+    a plain message naming what is missing — no stack trace.
+    """
+    import shutil
+    if requested == "faster-whisper":
+        if not _faster_whisper_available():
+            raise SystemExit(
+                "faster-whisper is not installed — install it "
+                "(pip install faster-whisper) or use "
+                "--transcriber whisper-cpp.")
+        return "faster-whisper"
+    if requested == "whisper-cpp":
+        if shutil.which("whisper-cli") is None:
+            raise SystemExit(
+                "whisper-cli not found on PATH — install whisper.cpp "
+                "(see TERMUX.md) or use --transcriber faster-whisper.")
+        return "whisper-cpp"
+    # auto
+    if _faster_whisper_available():
+        return "faster-whisper"
+    if shutil.which("whisper-cli") is not None:
+        return "whisper-cpp"
+    raise SystemExit(
+        "No transcription backend available — install faster-whisper "
+        "(pip install faster-whisper) or whisper-cli (see TERMUX.md).")
+
+
+def default_model_path(model):
+    """ggml model file for the whisper-cpp backend: models/ggml-<model>.bin."""
+    return str(Path(__file__).resolve().parent / "models" / f"ggml-{model}.bin")
+
+
+def require_whisper_cpp_model(model_path, model):
+    """Fail plainly when the ggml model file is missing.
+
+    The file is a ~75 MB download, not something the clipper fetches
+    silently — the message says exactly where to get it.
+    """
+    if not Path(model_path).is_file():
+        raise SystemExit(
+            f"whisper.cpp model not found: {model_path}\n"
+            f"Download it first: {WHISPER_CPP_MODEL_URL.format(model=model)}\n"
+            f"Save it as {model_path} (or pass --model-path <path>).")
+
+
+def parse_whisper_cpp_json(data):
+    """Parse whisper-cli -ojf JSON into (words, segments).
+
+    With `-ml 1 -sow` each transcription entry is one word, with
+    offsets.from/to in milliseconds. Returns the same shape as
+    transcribe(): words are {start, end, word} in seconds, segments
+    are {start, end, text}. Segments are rebuilt by grouping
+    consecutive words, splitting on a gap over 0.8s or after 10 words.
+    Pure function — no binary needed, so tests use it directly.
+    """
+    words = []
+    for entry in (data.get("transcription") or []):
+        text = (entry.get("text") or "").strip()
+        if (not text or text in _SPECIAL_TOKENS or text.startswith("[_")
+                or _BRACKETED_RE.match(text)):
+            continue
+        offsets = entry.get("offsets") or {}
+        start_ms = offsets.get("from")
+        end_ms = offsets.get("to")
+        if start_ms is None or end_ms is None:
+            # Fall back to the "HH:MM:SS,mmm" timestamp strings.
+            start_ms = _parse_whisper_ts((entry.get("timestamps") or {}).get("from"))
+            end_ms = _parse_whisper_ts((entry.get("timestamps") or {}).get("to"))
+        if start_ms is None or end_ms is None:
+            continue
+        # whisper.cpp sometimes gives the first token of a word a
+        # zero-length span (from == to). The word was still spoken at
+        # that instant — give it a 100ms floor so downstream timestamps
+        # stay sane.
+        if end_ms <= start_ms:
+            end_ms = start_ms + 100
+        words.append({"start": round(start_ms / 1000.0, 3),
+                      "end": round(end_ms / 1000.0, 3),
+                      "word": text})
+    words.sort(key=lambda w: w["start"])
+    words = _drop_bracketed_annotations(words)
+    segments = []
+    cur = []
+    for w in words:
+        if cur:
+            gap = w["start"] - cur[-1]["end"]
+            if gap > 0.8 or len(cur) >= 10:
+                segments.append(_words_to_segment(cur))
+                cur = []
+        cur.append(w)
+    if cur:
+        segments.append(_words_to_segment(cur))
+    return words, segments
+
+
+def _drop_bracketed_annotations(words):
+    """Drop [ ... ] sound annotations from the word list.
+
+    whisper.cpp splits '[Music]' into three word entries ('[',
+    'Music', ']') — a single-entry check cannot catch them, so scan
+    for bracket runs and drop the whole run. A '[' ... ']' run is
+    never speech. A lone bracket token with no close nearby is
+    dropped too; the run is capped at 6 words so a stray '[' can
+    never swallow real speech.
+    """
+    out, i = [], 0
+    pairs = {"[": "]", "(": ")"}
+    while i < len(words):
+        w = words[i]["word"]
+        if w in pairs:
+            close = pairs[w]
+            j = i + 1
+            while j < len(words) and words[j]["word"] != close and j - i <= 6:
+                j += 1
+            if j < len(words) and words[j]["word"] == close:
+                i = j + 1  # drop the whole run, brackets included
+            else:
+                i += 1  # lone bracket, drop just it
+            continue
+        if w in ("]", ")"):
+            i += 1  # closing bracket with no opener
+            continue
+        out.append(words[i])
+        i += 1
+    return out
+
+
+def _words_to_segment(words):
+    return {"start": words[0]["start"], "end": words[-1]["end"],
+            "text": " ".join(w["word"] for w in words)}
+
+
+def _parse_whisper_ts(value):
+    """Parse a whisper.cpp "HH:MM:SS,mmm" timestamp into milliseconds."""
+    if not value:
+        return None
+    try:
+        hms, ms = value.split(",")
+        h, m, s = (int(p) for p in hms.split(":"))
+        return ((h * 60 + m) * 60 + s) * 1000 + int(ms)
+    except (ValueError, AttributeError):
+        return None
+
+
+def transcribe_whisper_cpp(wav_path, model_path, language, model="tiny"):
+    """Transcribe with the whisper.cpp CLI (the Termux path).
+
+    Runs `whisper-cli -m <model> -f <wav> -l <lang> -ml 1 -sow -oj -of
+    <prefix>` and parses the JSON it writes. Returns (words, segments)
+    in the same shape as transcribe(). A missing binary or a failed
+    run degrades to ([], []) with a WARN, exactly like the
+    faster-whisper failure path — never fake a transcript, never crash
+    the job. A missing model file is different: that fails fast with a
+    plain message (see require_whisper_cpp_model).
+    """
+    import shutil
+    cli = shutil.which("whisper-cli")
+    if cli is None:
+        print("WARN: whisper-cli not found on PATH — transcript disabled.")
+        return [], []
+    require_whisper_cpp_model(model_path, model)
+    print(f"Transcribing locally with whisper-cli model={model_path} ...")
+    prefix = str(Path(wav_path).with_suffix(""))
+    out_json = Path(prefix + ".json")
+    lang = language or "auto"
+    cmd = [cli, "-m", str(model_path), "-f", str(wav_path),
+           "-l", lang, "-ml", "1", "-sow", "-oj", "-of", prefix]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True)
+    except Exception as e:
+        print(f"WARN: whisper-cli failed to start ({type(e).__name__}: {e}) — "
+              "falling back to audio-only scoring, no captions.")
+        return [], []
+    if r.returncode != 0:
+        print(f"WARN: whisper-cli failed (exit {r.returncode}) — "
+              "falling back to audio-only scoring, no captions.")
+        print((r.stderr or "")[-1000:], file=sys.stderr)
+        return [], []
+    try:
+        data = json.loads(out_json.read_text(encoding="utf-8"))
+        words, segs = parse_whisper_cpp_json(data)
+    except Exception as e:
+        print(f"WARN: could not read whisper-cli output "
+              f"({type(e).__name__}: {e}) — falling back to audio-only "
+              "scoring, no captions.")
+        return [], []
+    finally:
+        try:
+            out_json.unlink(missing_ok=True)
+        except OSError:
+            pass
     print(f"  transcript: {len(words)} words, {len(segs)} segments")
     return words, segs
 
@@ -406,7 +641,17 @@ def main():
     ap.add_argument("--out", default=None, help="job output dir (default output/<timestamp>)")
     ap.add_argument("--num-clips", type=int, default=5)
     ap.add_argument("--clip-seconds", type=int, default=30)
-    ap.add_argument("--model", default="tiny", help="faster-whisper model: tiny/small/base")
+    ap.add_argument("--model", default="tiny",
+                    help="model name: tiny | small | base — same name on both "
+                         "backends; whisper-cpp reads models/ggml-<model>.bin")
+    ap.add_argument("--transcriber", default="auto",
+                    choices=["auto", "faster-whisper", "whisper-cpp"],
+                    help="transcription backend: auto (faster-whisper when "
+                         "installed, else whisper-cli), faster-whisper, or "
+                         "whisper-cpp (the Termux path — see TERMUX.md)")
+    ap.add_argument("--model-path", default=None,
+                    help="ggml model file for --transcriber whisper-cpp "
+                         "(default models/ggml-<model>.bin)")
     ap.add_argument("--language", default="en")
     ap.add_argument("--mode", default="auto", choices=["gameplay", "talking", "auto"],
                     help="scoring mode: gameplay (audio spikes + excited speech), "
@@ -434,15 +679,34 @@ def main():
     job_dir.mkdir(parents=True, exist_ok=True)
     (root / "input").mkdir(exist_ok=True)
 
-    if args.url:
-        print(f"Downloading {args.url} ...")
-        src = download_url(args.url, root / "input")
-    elif args.input:
+    # A missing local file fails here, before backend setup, so a typo
+    # says "input not found" instead of a misleading backend error.
+    # A URL is only downloaded after the backend check below, so a
+    # missing model still fails before any download.
+    if args.input:
         src = Path(args.input)
         if not src.exists():
             raise SystemExit(f"input not found: {src}")
-    else:
+    elif not args.url:
         ap.error("give a local video file or --url")
+
+    # Pick the transcription backend before anything is cut, so a
+    # missing backend / missing model file fails fast with a plain
+    # message instead of halfway through a job. --no-whisper needs
+    # no backend at all.
+    transcriber = None
+    model_path = None
+    if not args.no_whisper:
+        transcriber = resolve_transcriber(args.transcriber)
+        if transcriber == "whisper-cpp":
+            model_path = args.model_path or default_model_path(args.model)
+            require_whisper_cpp_model(model_path, args.model)
+        print(f"  transcriber: {transcriber}"
+              + (f" ({model_path})" if model_path else ""))
+
+    if args.url:
+        print(f"Downloading {args.url} ...")
+        src = download_url(args.url, root / "input")
 
     print(f"Source: {src}")
     info = probe(src)
@@ -461,7 +725,11 @@ def main():
         extract_wav(src, wav)
         energy = rms_per_second(wav)
         if not args.no_whisper:
-            words, segs = transcribe(wav, args.model, args.language)
+            if transcriber == "whisper-cpp":
+                words, segs = transcribe_whisper_cpp(wav, model_path,
+                                                      args.language, args.model)
+            else:
+                words, segs = transcribe(wav, args.model, args.language)
             whisper_used = bool(words)
             if not whisper_used:
                 print("  WARN: transcription produced no words — falling back to audio-only scoring")
@@ -527,6 +795,7 @@ def main():
         "mode_requested": args.mode, "mode": mode,
         "mode_fallback": mode_fallback,
         "whisper_model": None if args.no_whisper else args.model,
+        "transcriber": transcriber,
         "whisper_used": whisper_used,
         "scoring": scoring_desc,
         "clips": clips,
