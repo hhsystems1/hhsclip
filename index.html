@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>HHS Clips — Cut. Approve. Post.</title>
+<style>
+  :root {
+    --bg: #14100d;
+    --glass: rgba(255,255,255,.06);
+    --border: rgba(255,255,255,.12);
+    --text: #faf7f2;
+    --muted: rgba(255,255,255,.62);
+    --amber: #f59e0b;
+    --amber-2: #fbbf24;
+    --amber-deep: #ea580c;
+    --green: #34d399;
+    --radius: 20px;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    color: var(--text);
+    background:
+      radial-gradient(1100px 620px at 88% -8%, rgba(245,158,11,.30), transparent 62%),
+      radial-gradient(900px 560px at -12% 108%, rgba(234,88,12,.20), transparent 60%),
+      radial-gradient(720px 460px at 50% 42%, rgba(146,64,14,.14), transparent 72%),
+      var(--bg);
+    background-attachment: fixed;
+    min-height: 100vh;
+  }
+  ::selection { background: rgba(245,158,11,.4); }
+  a:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+
+  header {
+    padding: 22px 16px 16px;
+    background: rgba(255,255,255,.05);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -.02em; }
+  header p { margin: 6px 0 0; font-size: 15px; color: var(--muted); line-height: 1.5; }
+
+  main { max-width: 520px; margin: 0 auto; padding: 0 12px 48px; }
+
+  .card {
+    background: var(--glass);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    box-shadow: 0 12px 32px rgba(0,0,0,.35);
+    margin-top: 16px;
+    padding: 18px;
+  }
+  .card h2 { margin: 0 0 8px; font-size: 19px; font-weight: 800; letter-spacing: -.01em; line-height: 1.3; }
+  .card p { margin: 0 0 10px; font-size: 15px; line-height: 1.55; color: rgba(255,255,255,.88); }
+  .card p:last-child { margin-bottom: 0; }
+  .card .muted { color: var(--muted); font-size: 14px; }
+  .card code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px; background: rgba(0,0,0,.35);
+    border: 1px solid var(--border); border-radius: 8px; padding: 2px 6px;
+    word-break: break-all;
+  }
+  .card ol { margin: 6px 0 0; padding-left: 20px; }
+  .card li { font-size: 15px; line-height: 1.55; margin-bottom: 6px; color: rgba(255,255,255,.88); }
+
+  .banner {
+    margin-top: 16px; padding: 14px 16px;
+    border: 1px solid rgba(52,211,153,.35); border-radius: var(--radius);
+    background: rgba(52,211,153,.08);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    font-size: 14px; line-height: 1.5; color: rgba(255,255,255,.88);
+  }
+  .banner b { color: #fff; }
+
+  .btn {
+    display: flex; align-items: center; justify-content: center;
+    min-height: 52px; padding: 14px 18px; margin-top: 16px;
+    border-radius: 999px; text-decoration: none; text-align: center;
+    font-size: 16px; font-weight: 800;
+    background: linear-gradient(135deg, var(--amber-2), var(--amber) 55%, var(--amber-deep));
+    color: #241300; border: 1px solid transparent;
+  }
+  .btn.ghost {
+    background: var(--glass); color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .btnrow { display: flex; gap: 10px; }
+  .btnrow .btn { flex: 1; }
+
+  footer { text-align: center; font-size: 13px; color: var(--muted); padding: 8px 16px 32px; line-height: 1.5; }
+  footer a { color: var(--amber-2); }
+
+  @media (min-width: 760px) {
+    main { max-width: 720px; }
+    header h1 { font-size: 28px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>✂️ HHS Clips</h1>
+  <p>Cut. Approve. Post. — your own videos only.</p>
+</header>
+
+<main>
+  <div class="card">
+    <h2>Long video in, short clips out.</h2>
+    <p>Drop in a video you own — a podcast, talk, webinar, demo, or stream VOD — and the app cuts the best short vertical moments, with captions, for you to approve.</p>
+    <p>Only clips you approve can post, and only when you tap Post. YouTube posts as Private, TikTok as Self-only, until those apps pass their audits. Dry-run is on by default, so nothing posts by accident.</p>
+  </div>
+
+  <div class="banner">
+    <b>This page is just the front door.</b> The app itself runs on your own computer or phone — this site can't run it for you. Pick a way to run it below.
+  </div>
+
+  <a class="btn" href="http://localhost:8000">Open the dashboard →</a>
+  <p class="muted" style="text-align:center; font-size:13px; color:var(--muted); margin:8px 0 0;">Only works while the app is running on this device.</p>
+
+  <div class="card">
+    <h2>Run it on your phone</h2>
+    <p>Termux, from F-Droid (not the Play Store):</p>
+    <ol>
+      <li><code>pkg install -y python ffmpeg git</code></li>
+      <li><code>git clone https://github.com/hhsystems1/hhsclip.git</code></li>
+      <li><code>cd hhsclip &amp;&amp; python3 server.py</code></li>
+      <li>Open <code>http://localhost:8000</code> on the phone.</li>
+    </ol>
+    <p class="muted">Full steps, downloads and the whisper model: <a href="https://github.com/hhsystems1/hhsclip/blob/main/TERMUX.md" style="color:var(--amber-2);">TERMUX.md</a></p>
+  </div>
+
+  <div class="card">
+    <h2>Run it on your computer</h2>
+    <ol>
+      <li><code>git clone https://github.com/hhsystems1/hhsclip.git</code></li>
+      <li><code>cd hhsclip &amp;&amp; python3 -m venv venv &amp;&amp; ./venv/bin/pip install -r requirements.txt</code></li>
+      <li><code>./venv/bin/python server.py --host 0.0.0.0</code></li>
+      <li>Open <code>http://localhost:8000</code> — or from your phone, <code>http://&lt;computer-IP&gt;:8000</code>.</li>
+    </ol>
+    <p class="muted">Needs ffmpeg installed. Full setup and posting accounts: <a href="https://github.com/hhsystems1/hhsclip/blob/main/README.md" style="color:var(--amber-2);">README.md</a></p>
+  </div>
+
+  <div class="btnrow">
+    <a class="btn ghost" href="https://github.com/hhsystems1/hhsclip">GitHub</a>
+    <a class="btn ghost" href="https://github.com/hhsystems1/hhsclip/blob/main/SETUP.md">Posting setup</a>
+  </div>
+</main>
+
+<footer>
+  Free and open source (MIT). Your videos only — every job needs that confirmed before it runs.<br>
+  Built by <a href="https://helpinghandssystems.com">Helping Hands Systems</a>.
+</footer>
+</body>
+</html>
