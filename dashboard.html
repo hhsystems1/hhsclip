@@ -203,6 +203,12 @@
     color: #241300; font-size: 16px; font-weight: 700;
   }
   .job button:disabled { opacity: .45; }
+  .job button.export {
+    background: var(--glass); color: var(--text);
+    border: 1px solid var(--border); margin-top: 8px;
+  }
+  .job .export-out { font-size: 13px; line-height: 1.5; color: var(--muted); margin-top: 10px; word-break: break-all; }
+  .job .export-out b { color: var(--text); }
 
   /* Progress / log */
   .progress {
@@ -287,10 +293,11 @@ function renderNew() {
     <input type="url" id="f-url" placeholder="https://www.youtube.com/watch?v=…">
     <label>Scoring mode</label>
     <select id="f-mode">
-      <option value="auto" selected>Auto — talking-head when speech is dense, gameplay when it isn't</option>
-      <option value="talking">Talking-head — hooks, quotable lines, questions</option>
-      <option value="gameplay">Gameplay — loud moments + excited speech</option>
+      <option value="auto" selected>Auto — picks per video</option>
+      <option value="talking">Talking-head — hooks &amp; quotes</option>
+      <option value="gameplay">Gameplay — loud, excited moments</option>
     </select>
+    <p class="hint">Auto uses talking-head when speech is dense, gameplay when it isn't.</p>
     <label>Transcription model</label>
     <select id="f-model">
       <option value="tiny" selected>tiny — fastest (good on this machine)</option>
@@ -371,7 +378,22 @@ async function renderJobs() {
       ${job.error ? `<p class="hint" style="color:#ff8a8a">⚠ ${escapeHtml(job.error)}</p>` : ''}
       <p class="hint">${escapeHtml(job.job)} · ${escapeHtml(job.created_utc || '')}</p>
       <button ${job.status === 'done' ? '' : 'disabled'} onclick="location.hash='#/job/${escapeAttr(job.job)}'">Open approval queue →</button>
+      <button class="export" ${job.status === 'done' ? '' : 'disabled'} onclick="exportReview('${escapeAttr(job.job)}', this)">Export client review page ↗</button>
+      <div class="export-out" id="export-${escapeAttr(job.job)}"></div>
     </div>`).join('');
+}
+
+async function exportReview(jobId, btn) {
+  const out = document.getElementById('export-' + jobId);
+  btn.disabled = true;
+  out.innerHTML = 'Exporting…';
+  try {
+    const r = await fetch(`/api/jobs/${jobId}/export-review`, { method: 'POST' });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { out.innerHTML = '❌ ' + escapeHtml(j.error || 'Export failed'); btn.disabled = false; return; }
+    out.innerHTML = `<b>✅ Review page ready:</b> ${escapeHtml(j.dir)}<br>${j.files.length} files · ${j.ingest_configured ? 'approvals will reach HHS ✓' : 'not connected — client decisions stay in their browser'}<br>${escapeHtml(j.next)}`;
+  } catch (e) { out.innerHTML = '❌ Could not reach the server.'; }
+  btn.disabled = false;
 }
 
 /* ---------- Approval queue ---------- */

@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Review clips — HHS Clips</title>
+<style>
+  :root {
+    --bg: #14100d;
+    --glass: rgba(255,255,255,.06);
+    --border: rgba(255,255,255,.12);
+    --text: #faf7f2;
+    --muted: rgba(255,255,255,.62);
+    --amber: #f59e0b;
+    --amber-2: #fbbf24;
+    --amber-deep: #ea580c;
+    --green: #34d399;
+    --red: #f87171;
+    --radius: 20px;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    color: var(--text);
+    background:
+      radial-gradient(1100px 620px at 88% -8%, rgba(245,158,11,.30), transparent 62%),
+      radial-gradient(900px 560px at -12% 108%, rgba(234,88,12,.20), transparent 60%),
+      radial-gradient(720px 460px at 50% 42%, rgba(146,64,14,.14), transparent 72%),
+      var(--bg);
+    background-attachment: fixed;
+    min-height: 100vh;
+  }
+  ::selection { background: rgba(245,158,11,.4); }
+  a:focus-visible, button:focus-visible, textarea:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+
+  header {
+    padding: 18px 16px 14px;
+    background: rgba(255,255,255,.05);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { margin: 0; font-size: 21px; font-weight: 800; letter-spacing: -.02em; }
+  header p { margin: 4px 0 0; font-size: 14px; color: var(--muted); }
+
+  main { max-width: 520px; margin: 0 auto; padding: 0 12px 48px; }
+  main h2 { font-size: 19px; margin: 16px 0 4px; letter-spacing: -.01em; line-height: 1.3; }
+  .sub { font-size: 13px; color: var(--muted); margin: 0 0 12px; line-height: 1.5; }
+
+  /* Honest banner — what happens when you tap */
+  .banner {
+    margin: 12px; padding: 14px 16px;
+    border: 1px solid rgba(52,211,153,.35); border-radius: var(--radius);
+    background: rgba(52,211,153,.08);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    font-size: 14px; line-height: 1.5; color: rgba(255,255,255,.88);
+    max-width: 520px; margin-left: auto; margin-right: auto;
+  }
+  .banner b { color: #fff; }
+  .banner.warn {
+    border-color: rgba(245,158,11,.45);
+    background: rgba(245,158,11,.10);
+  }
+
+  /* Live counts */
+  .counts { display: flex; gap: 8px; margin: 0 0 4px; }
+  .counts div {
+    flex: 1; text-align: center; padding: 10px 4px; border-radius: 14px;
+    border: 1px solid var(--border); background: var(--glass);
+    font-size: 13px; color: var(--muted);
+  }
+  .counts b { display: block; font-size: 22px; color: var(--text); line-height: 1.1; }
+  .counts .ok b { color: #6ee7b7; }
+  .counts .bad b { color: #fca5a5; }
+
+  /* Glass cards */
+  .card {
+    background: var(--glass);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    box-shadow: 0 12px 32px rgba(0,0,0,.35);
+    margin-bottom: 16px; overflow: hidden;
+    transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease;
+  }
+  .card video { width: 100%; max-height: 62vh; display: block; background: #000; }
+  .body { padding: 16px; }
+  .meta { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+  .title { font-size: 18px; font-weight: 800; margin: 0 0 6px; line-height: 1.3; letter-spacing: -.01em; }
+  .reason { font-size: 14px; color: rgba(255,255,255,.82); margin: 0 0 8px; line-height: 1.5; }
+  .excerpt { font-size: 13px; color: var(--muted); font-style: italic; margin: 0 0 10px; line-height: 1.5; }
+
+  .badge { display: inline-block; padding: 5px 11px; border-radius: 999px; font-size: 12px; font-weight: 700; letter-spacing: .02em; border: 1px solid transparent; }
+  .badge.pending { background: rgba(245,158,11,.16); color: #fcd34d; border-color: rgba(245,158,11,.35); }
+  .badge.approved { background: rgba(52,211,153,.14); color: #6ee7b7; border-color: rgba(52,211,153,.35); }
+  .badge.changes { background: rgba(248,113,113,.14); color: #fca5a5; border-color: rgba(248,113,113,.35); }
+
+  .decision { font-size: 13px; line-height: 1.5; margin: 10px 0 0; padding: 10px 12px; border-radius: 12px; background: rgba(0,0,0,.28); border: 1px solid var(--border); }
+  .decision.sent { border-color: rgba(52,211,153,.5); }
+  .decision.local { border-color: rgba(245,158,11,.5); }
+  .decision.failed { border-color: rgba(248,113,113,.5); }
+
+  /* Actions */
+  .actions { display: flex; gap: 10px; margin-top: 16px; }
+  .actions button {
+    flex: 1; min-height: 52px; border: none; border-radius: 14px;
+    font-size: 16px; font-weight: 700;
+    transition: transform .18s ease, filter .18s ease;
+  }
+  .actions button:active { transform: scale(.97); }
+  .actions button:disabled { opacity: .45; }
+  .approve { background: linear-gradient(135deg, #6ee7b7, var(--green) 60%, #059669); color: #04150d; }
+  .ask { background: rgba(255,255,255,.08); color: var(--text); border: 1px solid var(--border); }
+
+  /* Ask-for-changes dialog */
+  dialog {
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: #1d1712; color: var(--text);
+    padding: 20px; width: min(92vw, 480px);
+    box-shadow: 0 24px 64px rgba(0,0,0,.6);
+  }
+  dialog::backdrop { background: rgba(0,0,0,.65); }
+  dialog h3 { margin: 0 0 4px; font-size: 18px; font-weight: 800; }
+  dialog p { margin: 0 0 12px; font-size: 14px; color: var(--muted); line-height: 1.5; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .chips button {
+    min-height: 44px; padding: 10px 14px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--glass);
+    color: var(--text); font-size: 14px; font-weight: 600;
+  }
+  .chips button.on {
+    background: linear-gradient(135deg, var(--amber-2), var(--amber) 55%, var(--amber-deep));
+    border-color: transparent; color: #241300;
+  }
+  dialog label { display: block; font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); margin: 12px 0 6px; }
+  dialog textarea {
+    width: 100%; min-height: 88px; padding: 12px 14px; resize: vertical;
+    border-radius: 14px; border: 1px solid var(--border);
+    background: rgba(0,0,0,.28); color: var(--text); font-size: 15px; font-family: inherit;
+  }
+  dialog textarea:focus { outline: none; border-color: var(--amber); box-shadow: 0 0 0 3px rgba(245,158,11,.25); }
+  .dlg-actions { display: flex; gap: 10px; margin-top: 16px; }
+  .dlg-actions button { flex: 1; min-height: 52px; border-radius: 14px; font-size: 16px; font-weight: 700; border: none; }
+  .dlg-actions .cancel { background: rgba(255,255,255,.08); color: var(--text); border: 1px solid var(--border); }
+  .dlg-actions .send { background: linear-gradient(135deg, var(--amber-2), var(--amber) 55%, var(--amber-deep)); color: #241300; }
+  .dlg-actions .send:disabled { opacity: .45; }
+
+  .toast {
+    position: fixed; left: 12px; right: 12px; bottom: 16px;
+    background: linear-gradient(135deg, #6ee7b7, var(--green)); color: #04150d;
+    font-weight: 700; text-align: center; padding: 14px; border-radius: 14px;
+    display: none; z-index: 10; box-shadow: 0 12px 32px rgba(0,0,0,.5);
+  }
+  .toast.warn { background: linear-gradient(135deg, #fcd34d, var(--amber)); color: #241300; }
+  .toast.err { background: linear-gradient(135deg, #fca5a5, #ef4444); color: #2b0606; }
+  .empty { text-align: center; color: var(--muted); padding: 48px 16px; font-size: 16px; line-height: 1.6; }
+
+  @media (hover: hover) {
+    .card:hover { transform: translateY(-5px); border-color: rgba(255,255,255,.22); box-shadow: 0 20px 44px rgba(0,0,0,.5); }
+    .actions button:hover, .chips button:hover { filter: brightness(1.12); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+  @media (min-width: 760px) {
+    .banner, main { max-width: 720px; }
+    main { padding: 0 20px 56px; }
+    #list { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+    #list .card { margin-bottom: 0; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>✂️ HHS Clips</h1>
+  <p>Review the clips — approve the ones you like, ask for changes on the rest.</p>
+</header>
+<div class="banner" id="banner"><b>Loading…</b></div>
+<main id="main"><div class="empty">Loading clips…</div></main>
+<div class="toast" id="toast"></div>
+
+<dialog id="dlg">
+  <h3>Ask for changes</h3>
+  <p id="dlg-clip">Clip</p>
+  <div class="chips" id="chips"></div>
+  <label for="dlg-note">What should change? (Required)</label>
+  <textarea id="dlg-note" placeholder="e.g. Cut the first 5 seconds — the good bit starts when he says…"></textarea>
+  <div class="dlg-actions">
+    <button class="cancel" id="dlg-cancel" type="button">Cancel</button>
+    <button class="send" id="dlg-send" type="button" disabled>Send</button>
+  </div>
+</dialog>
+
+<script>
+const REASONS = ['Trim the start', 'Cut this part', 'Caption is wrong', 'Sound is off', 'Wrong hook', 'Make it shorter', 'Something else'];
+const params = new URLSearchParams(location.search);
+const DEMO = params.has('demo');
+const main = document.getElementById('main');
+const banner = document.getElementById('banner');
+const toast = document.getElementById('toast');
+const dlg = document.getElementById('dlg');
+const dlgNote = document.getElementById('dlg-note');
+const dlgSend = document.getElementById('dlg-send');
+let data = null;                 // review.json
+let decisions = {};              // clip id -> {decision, reason, note, sent}
+let dlgClip = null, dlgReason = '';
+let videoBase = '';              // prefix for clip files, set by load()
+
+function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch])); }
+function escapeAttr(s) { return escapeHtml(s).replace(/"/g, '&quot;'); }
+function mmss(s) { return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(Math.floor(s % 60)).padStart(2, '0'); }
+function showToast(msg, kind) {
+  toast.textContent = msg;
+  toast.className = 'toast' + (kind ? ' ' + kind : '');
+  toast.style.display = 'block';
+  setTimeout(() => toast.style.display = 'none', 3200);
+}
+
+function connected() { return !!(data && data.ingest && data.ingest.url && data.ingest.token); }
+
+function renderBanner() {
+  if (DEMO || (data && data.demo)) {
+    banner.className = 'banner warn';
+    banner.innerHTML = '<b>DEMO · CHANGES AREN’T SAVED.</b> This is a sample page — your taps here go nowhere. A real review link sends your decisions to Helping Hands Systems.';
+    return;
+  }
+  if (connected()) {
+    banner.className = 'banner';
+    banner.innerHTML = '<b>Your taps go straight to Helping Hands Systems.</b> Approve a clip or ask for changes and we see it — nothing posts anywhere from this page.';
+  } else {
+    banner.className = 'banner warn';
+    banner.innerHTML = '<b>Not connected yet — your decisions are saved in this browser only.</b> If you close this page, they’re gone. (HHS can connect this page so your taps reach us.) Nothing posts anywhere from this page.';
+  }
+}
+
+function counts() {
+  let pending = 0, approved = 0, changes = 0;
+  for (const c of data.clips) {
+    const d = decisions[c.id];
+    if (!d) pending++;
+    else if (d.decision === 'approved') approved++;
+    else changes++;
+  }
+  return { pending, approved, changes };
+}
+
+function renderCounts() {
+  const n = counts();
+  document.getElementById('counts').innerHTML = `
+    <div><b>${n.pending}</b>pending</div>
+    <div class="ok"><b>${n.approved}</b>approved</div>
+    <div class="bad"><b>${n.changes}</b>changes asked</div>`;
+}
+
+function decisionLine(c) {
+  const d = decisions[c.id];
+  if (!d) return '';
+  if (d.decision === 'approved') {
+    const how = d.sent === 'sent' ? 'Sent to Helping Hands Systems ✓' : d.sent === 'local' ? 'Saved on this page (not connected)' : d.sent === 'sending' ? 'Sending…' : 'Couldn’t send — saved on this page, try again';
+    return `<div class="decision ${d.sent}"><b>✓ Approved.</b> ${escapeHtml(how)}</div>`;
+  }
+  const how = d.sent === 'sent' ? 'Sent to Helping Hands Systems ✓' : d.sent === 'local' ? 'Saved on this page (not connected)' : d.sent === 'sending' ? 'Sending…' : 'Couldn’t send — saved on this page, try again';
+  return `<div class="decision ${d.sent}"><b>Changes asked — ${escapeHtml(d.reason)}.</b> “${escapeHtml(d.note)}”<br>${escapeHtml(how)}</div>`;
+}
+
+function renderList() {
+  const list = document.getElementById('list');
+  list.innerHTML = '';
+  data.clips.forEach(c => {
+    const d = decisions[c.id];
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.id = 'card-' + c.id;
+    card.innerHTML = `
+      <video src="${escapeAttr(videoBase + c.video)}" controls playsinline preload="metadata"></video>
+      <div class="body">
+        <div class="meta">${mmss(c.start)}–${mmss(c.end)} · ${c.duration}s · score ${c.score}</div>
+        <span class="badge ${d ? (d.decision === 'approved' ? 'approved' : 'changes') : 'pending'}">${d ? (d.decision === 'approved' ? 'APPROVED' : 'CHANGES ASKED') : 'PENDING'}</span>
+        <p class="title">${escapeHtml(c.title)}</p>
+        <p class="reason">${escapeHtml(c.reason)}</p>
+        ${c.excerpt ? `<p class="excerpt">“${escapeHtml(c.excerpt)}”</p>` : ''}
+        ${decisionLine(c)}
+        <div class="actions">
+          <button class="approve">✓ Approve</button>
+          <button class="ask">Ask for changes</button>
+        </div>
+      </div>`;
+    card.querySelector('.approve').onclick = () => decide(c, 'approved', '', '');
+    card.querySelector('.ask').onclick = () => openDialog(c);
+    list.appendChild(card);
+  });
+}
+
+function render() {
+  main.innerHTML = `
+    <h2>${escapeHtml(data.title || 'Review clips')}</h2>
+    <p class="sub">${escapeHtml(data.source || '')}${data.mode ? ' · ' + escapeHtml(data.mode) + ' mode' : ''} · ${data.clips.length} clips</p>
+    <div class="counts" id="counts"></div>
+    <div id="list"></div>`;
+  renderCounts();
+  renderList();
+}
+
+/* ---------- Decisions + ingest ---------- */
+async function decide(clip, decision, reason, note) {
+  const rec = { decision, reason, note, sent: 'sending' };
+  decisions[clip.id] = rec;
+  renderCounts();
+  renderList();
+  if (DEMO || (data && data.demo) || !connected()) {
+    rec.sent = 'local';
+    renderCounts();
+    renderList();
+    showToast(decision === 'approved' ? 'Approved — saved on this page.' : 'Changes noted — saved on this page.', 'warn');
+    return;
+  }
+  try {
+    const r = await fetch(data.ingest.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Site-Token': data.ingest.token },
+      body: JSON.stringify({
+        event_type: 'cta_click',
+        path: location.pathname,
+        referrer: document.referrer || '',
+        meta: {
+          source: 'hhsclip-review',
+          job: data.job,
+          clip_id: clip.id,
+          clip_title: clip.title,
+          decision,
+          reason: reason || '',
+          note: note || '',
+        },
+      }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.ok) {
+      rec.sent = 'sent';
+      showToast(decision === 'approved' ? 'Approved — sent to Helping Hands Systems ✓' : 'Changes sent to Helping Hands Systems ✓');
+    } else {
+      rec.sent = 'failed';
+      showToast('Couldn’t send — your decision is saved on this page.', 'err');
+    }
+  } catch (e) {
+    rec.sent = 'failed';
+    showToast('Couldn’t send — your decision is saved on this page.', 'err');
+  }
+  renderCounts();
+  renderList();
+}
+
+/* ---------- Ask-for-changes dialog ---------- */
+function openDialog(clip) {
+  dlgClip = clip;
+  dlgReason = '';
+  document.getElementById('dlg-clip').textContent = clip.title;
+  const chips = document.getElementById('chips');
+  chips.innerHTML = '';
+  REASONS.forEach(r => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = r;
+    b.onclick = () => {
+      dlgReason = r;
+      chips.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+      validateDialog();
+    };
+    chips.appendChild(b);
+  });
+  dlgNote.value = '';
+  validateDialog();
+  dlg.showModal();
+}
+function validateDialog() {
+  dlgSend.disabled = !(dlgReason && dlgNote.value.trim());
+}
+dlgNote.addEventListener('input', validateDialog);
+document.getElementById('dlg-cancel').onclick = () => dlg.close();
+dlgSend.onclick = () => {
+  if (!dlgClip || !dlgReason || !dlgNote.value.trim()) return;
+  const clip = dlgClip, reason = dlgReason, note = dlgNote.value.trim();
+  dlg.close();
+  decide(clip, 'changes_requested', reason, note);
+};
+
+/* ---------- Load ---------- */
+async function loadDemo() {
+  // Demo data lives in review/demo/ next to this file at the repo
+  // root — or in a demo/ folder beside the page. First URL that
+  // answers wins; the video prefix follows whichever one loaded.
+  const candidates = [
+    ['./review/demo/review.json', 'review/demo/'],
+    ['./demo/review.json', 'demo/'],
+  ];
+  for (const [u, base] of candidates) {
+    try {
+      const r = await fetch(u);
+      if (r.ok) { videoBase = base; return await r.json(); }
+    } catch (e) { /* try the next candidate */ }
+  }
+  throw new Error('demo data not found');
+}
+
+async function load() {
+  try {
+    if (DEMO) {
+      data = await loadDemo();
+    } else {
+      const r = await fetch('./review.json');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      data = await r.json();
+    }
+  } catch (e) {
+    banner.className = 'banner warn';
+    banner.innerHTML = '<b>Couldn’t load this review.</b> The link may be wrong or the files may be missing — ask Helping Hands Systems to send a fresh link.';
+    main.innerHTML = '<div class="empty">No clips to review.</div>';
+    return;
+  }
+  if (!Array.isArray(data.clips)) data.clips = [];
+  renderBanner();
+  render();
+}
+load();
+</script>
+</body>
+</html>
