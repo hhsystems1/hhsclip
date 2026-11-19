@@ -23,6 +23,7 @@ import json
 import mimetypes
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -63,6 +64,46 @@ def _read_status(job_dir):
         except json.JSONDecodeError:
             pass
     return {}
+
+
+def build_review_json(job):
+    """review.json for a client review page: the clips plus, when the
+    server has them, the hhs-core2 ingest endpoint + per-site token
+    (env HHS_REVIEW_INGEST_URL / HHS_REVIEW_INGEST_TOKEN). Decisions
+    POST to that endpoint as cta_click events with the decision in
+    meta — see review.html and README.md. No ingest config means the
+    review page keeps decisions in the browser only."""
+    ingest = None
+    url = os.environ.get("HHS_REVIEW_INGEST_URL", "").strip()
+    token = os.environ.get("HHS_REVIEW_INGEST_TOKEN", "").strip()
+    if url and token:
+        ingest = {"url": url, "token": token}
+    clips = []
+    for c in job.get("clips", []):
+        clips.append({
+            "id": c["id"],
+            "title": c.get("draft_title", c["id"]),
+            "video": c.get("video", ""),
+            "start": c.get("start"),
+            "end": c.get("end"),
+            "duration": c.get("duration"),
+            "score": c.get("score"),
+            "reason": c.get("reason", ""),
+            "excerpt": c.get("excerpt", ""),
+            "status": c.get("status", "pending"),
+        })
+    src = (job.get("source") or "").split("/")[-1] or job["job"]
+    out = {
+        "job": job["job"],
+        "title": f"Review clips — {src}",
+        "source": src,
+        "created_utc": job.get("created_utc", ""),
+        "mode": job.get("mode", ""),
+        "clips": clips,
+    }
+    if ingest:
+        out["ingest"] = ingest
+    return out
 
 
 def load_jobs():
@@ -330,6 +371,10 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/api/jobs":
             self._create_job()
             return
+        m = re.match(r"^/api/jobs/([A-Za-z0-9._-]+)/export-review$", u.path)
+        if m:
+            self._export_review(m.group(1))
+            return
         m = re.match(r"^/api/clips/([A-Za-z0-9._-]+)/(status|edit|post)$", u.path)
         if not m:
             self.send_error(404, "not found")
@@ -374,6 +419,50 @@ class Handler(BaseHTTPRequestHandler):
                 clip["draft_description"] = str(body["draft_description"])[:1000]
         save_job(job)
         self._json({"ok": True, "id": clip_id, "status": clip["status"]})
+
+    def _export_review(self, job_id):
+        """Export a job as a static client review page: review/<job-id>/
+        with index.html (copy of review.html), review.json (clips +
+        ingest config when set), and the clip mp4s. The folder is
+        ready to drag onto Netlify Drop — no server, no posting."""
+        job = None
+        for j in load_jobs():
+            if j["job"] == job_id:
+                job = j
+                break
+        if job is None:
+            self._json({"error": "job not found"}, 404)
+            return
+        if not job.get("clips"):
+            self._json({"error": "job has no clips yet"}, 400)
+            return
+        src_html = ROOT / "review.html"
+        if not src_html.exists():
+            self._json({"error": "review.html missing from server dir"}, 500)
+            return
+        dest = ROOT / "review" / job_id
+        dest.mkdir(parents=True, exist_ok=True)
+        (dest / "index.html").write_bytes(src_html.read_bytes())
+        review = build_review_json(job)
+        (dest / "review.json").write_text(json.dumps(review, indent=2),
+                                          encoding="utf-8")
+        copied, missing = [], []
+        for c in job["clips"]:
+            src = OUT / job_id / (c.get("video") or "")
+            if src.exists():
+                shutil.copyfile(src, dest / src.name)
+                copied.append(src.name)
+            else:
+                missing.append(c.get("video") or "")
+        self._json({
+            "ok": True, "job": job_id, "dir": str(dest),
+            "files": ["index.html", "review.json"] + copied,
+            "missing": missing,
+            "ingest_configured": bool(review.get("ingest")),
+            "next": "Drag this folder onto Netlify Drop "
+                    "(https://app.netlify.com/drop) or run: netlify deploy "
+                    f"--dir {dest} — then send the link to your client.",
+        })
 
     def _create_job(self):
         """Start a clip job from the UI. Own-content attestation is

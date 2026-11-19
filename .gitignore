@@ -10,6 +10,10 @@ jobs/
 *.srt
 !**/README.md
 
+# Exported client review folders (contain full-size clip mp4s) — never commit
+review/*
+!review/demo/
+
 # Python venv + models (downloaded locally, never commit)
 venv/
 __pycache__/

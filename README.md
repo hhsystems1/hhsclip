@@ -82,6 +82,62 @@ python3 server.py
 The app is phone-first (390px): big Approve / Reject buttons, video
 preview per clip, editable title/description.
 
+## Client review pages (Netlify) — send clips to a client for approval
+
+A job can be exported as a **static review page** — no server, no
+posting — and hosted on Netlify. The client opens the link, watches
+the clips, taps **Approve** or **Ask for changes** (quick reason +
+required note). Counts update live at the top.
+
+1. In the app, open **Jobs** and tap **Export client review page**
+   on a finished job (or `POST /api/jobs/<job-id>/export-review`).
+   It writes `review/<job-id>/` with `index.html` (a copy of
+   `review.html`), `review.json` (the clips), and the clip mp4s.
+2. Drag that folder onto [Netlify Drop](https://app.netlify.com/drop),
+   or `netlify deploy --dir review/<job-id>`, and send the link.
+3. The client reviews. That's it — nothing posts from this page.
+
+**How their decisions get back to HHS:** before exporting, set two
+env vars on the machine running `server.py`:
+
+```bash
+HHS_REVIEW_INGEST_URL=https://core.helpinghandssystems.com/api/ingest/events
+HHS_REVIEW_INGEST_TOKEN=<this site's ingest token from Rivryn>
+```
+
+Each decision then POSTs to hhs-core2's public ingest as a
+`cta_click` event (header `X-Site-Token`, the same contract the web
+beacon uses — migration 0030, `site_events`), with the decision in
+`meta`: `job`, `clip_id`, `decision` (`approved` /
+`changes_requested`), `reason`, `note`. There is no dedicated
+review-decision event type in hhs-core2 today — `cta_click` is the
+allowlisted type that fits — and no CRM view for them yet, so read
+them in Supabase (`site_events`, filter `meta->>'source' =
+'hhsclip-review'`) until one exists. A dedicated `clip_reviewed`
+event type would be a one-line change in hhs-core2
+(`EVENT_TYPES` in `src/lib/server/ingest.ts`).
+
+Two honest caveats:
+- The review page's origin (e.g. `https://<site>.netlify.app`) must
+  be allowlisted in `LEAD_INTAKE_ORIGINS` in hhs-core2, or the
+  browser blocks the send at the preflight — the page then shows
+  "Couldn't send — your decision is saved on this page" instead of
+  failing silently.
+- Without the two env vars, the page says so plainly in its banner
+  and keeps decisions in the client's browser only. If a send fails,
+  the clip shows "Couldn't send — saved on this page" — never a
+  silent success.
+
+**Demo:** `review.html?demo` loads the sample page (two 10-second
+sample clips from a Hans Rosling talk, embedded in
+`review/demo/review.json`, ~540 KB) with a
+"DEMO · CHANGES AREN'T SAVED" banner. `review/demo/` is itself a
+ready-to-deploy folder — `index.html` there is a copy of
+`review.html`, so dragging it onto Netlify Drop just works; refresh
+that copy if `review.html` changes. Exported folders live under
+`review/` and are git-ignored, except `review/demo/` which is
+committed on purpose.
+
 ## Run it on your phone (Termux)
 
 The whole app can run on an Android phone inside Termux — no computer
@@ -176,11 +232,12 @@ all 4, a "Ready to post" filter, and their receipts.
 (booleans only — never a secret). Full per-platform setup is in
 [SETUP.md](SETUP.md).
 
-Tests: `python3 -m unittest discover -s tests -v` — 24 tests, mocked
+Tests: `python3 -m unittest discover -s tests -v` — 47 tests, mocked
 HTTP only (gate refusals, dry-run makes no network calls, receipt
 shape, privacy defaults, not-configured handling, a mocked YouTube
-resumable-upload pass, mode selection, talking-head scoring, and the
-ownership gate on the CLI, the jobs API, and the posting gate). No
+resumable-upload pass, mode selection, talking-head scoring, the
+ownership gate on the CLI, the jobs API, and the posting gate, plus
+the client-review export endpoint and its review.json shape). No
 test touches a real platform.
 
 ## What is NOT in v1
