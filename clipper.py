@@ -1,0 +1,544 @@
+#!/usr/bin/env python3
+"""
+HHS Clips — local clipper. No posting in this file.
+
+Takes a long video you own — a local file or a video URL — transcribes
+it locally with faster-whisper, scores moments, cuts the top N into
+9:16 vertical clips with burned-in captions, and writes a clips.json
+manifest for the approval queue.
+
+Modes (--mode gameplay|talking|auto, default auto):
+- gameplay: audio-energy spikes + excited speech (game streams).
+- talking: transcript-based scoring for talking-head video — hooks,
+  quotable lines, questions, story peaks, emotion (podcasts, talks,
+  webinars, testimonials).
+- auto: talking when speech is dense (>= 1 word/sec on average),
+  gameplay when it isn't or there is no transcript. Explicit
+  --mode talking with no transcript falls back to gameplay scoring
+  and says so in the manifest.
+
+Own-content gate: every job needs --i-own-it. Without it the job is
+refused before anything is downloaded or cut. This app is for your
+own videos only.
+
+No cloud API keys. No uploads. Nothing in this file posts anywhere.
+"""
+import argparse
+import json
+import math
+import os
+import re
+import struct
+import subprocess
+import sys
+import wave
+from datetime import datetime, timezone
+from pathlib import Path
+
+EXCITEMENT = {
+    "let's go": 3, "lets go": 3, "oh my god": 3, "omg": 3, "no way": 3,
+    "insane": 3, "crazy": 2, "wow": 2, "holy": 2, "jesus": 2,
+    "got him": 3, "got 'em": 3, "got em": 3, "let's gooo": 3,
+    "yes": 1, "yeah": 1, "nooo": 2, "oh no": 2, "watch out": 2,
+    "kill": 2, "killed": 2, "explosion": 2, "exploded": 2, "crash": 2,
+    "crashed": 2, "chase": 2, "police": 1, "cops": 1, "heist": 2,
+    "haha": 2, "lol": 1, "what": 1, "bro": 1, "dude": 1,
+}
+HASHTAGS = ["#Gaming", "#Shorts", "#Clips", "#Gameplay"]
+TALKING_HASHTAGS = ["#Shorts", "#Clips", "#Podcast", "#Reels"]
+
+# Talking-head scoring (transcript-based). A window scores on what was
+# SAID, not how loud it was: a strong opening line, a short quotable
+# line, a question, a story turn, an emotional word, and whether the
+# window starts/ends on a sentence boundary (a clean cut).
+HOOK_STARTS = ("here's", "here is", "the secret", "nobody", "stop ",
+               "how to", "how do", "why", "what if", "the truth",
+               "let me", "imagine", "look", "the best", "the worst",
+               "number one", "did you know", "first ", "most people")
+QUESTION_STARTS = ("what", "why", "how", "when", "where", "who", "which",
+                   "can ", "should", "do you", "are you", "is there",
+                   "have you")
+STRONG_WORDS = {"amazing", "incredible", "secret", "mistake", "never",
+                "always", "best", "worst", "love", "hate", "free", "new",
+                "biggest", "first", "only", "truth", "actually", "really",
+                "huge", "important", "exactly", "wrong", "right"}
+STORY_MARKERS = ("then", "so ", "but ", "turns out", "suddenly", "finally",
+                 "the moment", "and then", "in the end", "after that",
+                 "next")
+
+
+def resolve_mode(requested, words, duration):
+    """Pick the effective scoring mode.
+
+    Explicit gameplay/talking pass through. auto -> talking when speech
+    is dense (>= 1 word/sec on average), gameplay when it isn't or
+    there is no transcript at all.
+    """
+    if requested in ("gameplay", "talking"):
+        return requested
+    if words and duration and len(words) / duration >= 1.0:
+        return "talking"
+    return "gameplay"
+
+
+def run(cmd, check=True):
+    print("  $", " ".join(str(c) for c in cmd))
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if check and r.returncode != 0:
+        print(r.stdout[-2000:], file=sys.stderr)
+        print(r.stderr[-2000:], file=sys.stderr)
+        raise SystemExit(f"command failed ({r.returncode}): {cmd[0]}")
+    return r
+
+
+def probe(path):
+    r = run(["ffprobe", "-v", "quiet", "-print_format", "json",
+             "-show_format", "-show_streams", str(path)], check=False)
+    if r.returncode != 0:
+        raise SystemExit(f"ffprobe failed on {path}")
+    j = json.loads(r.stdout)
+    fmt = j.get("format", {})
+    dur = float(fmt.get("duration", 0))
+    video = next((s for s in j["streams"] if s["codec_type"] == "video"), {})
+    audio = next((s for s in j["streams"] if s["codec_type"] == "audio"), {})
+    return {"duration": dur,
+            "width": int(video.get("width", 0)),
+            "height": int(video.get("height", 0)),
+            "has_audio": bool(audio), "has_video": bool(video)}
+
+
+def extract_wav(src, wav_path):
+    run(["ffmpeg", "-y", "-v", "error", "-i", str(src),
+         "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(wav_path)])
+
+
+def rms_per_second(wav_path):
+    """1-second RMS energy, stdlib only. Returns list[float] 0..1 (log-normalised)."""
+    with wave.open(str(wav_path), "rb") as w:
+        n = w.getnframes()
+        rate = w.getframerate()
+        frames = w.readframes(n)
+    samples = struct.unpack(f"<{len(frames)//2}h", frames)
+    per_sec = []
+    for i in range(0, len(samples), rate):
+        chunk = samples[i:i + rate]
+        if not chunk:
+            continue
+        rms = math.sqrt(sum(s * s for s in chunk) / len(chunk)) / 32768.0
+        per_sec.append(rms)
+    if not per_sec:
+        return []
+    # log scale: silence ~0, loud ~1
+    out = []
+    for r in per_sec:
+        v = (math.log10(r + 1e-4) + 4) / 4.0  # 1e-4 -> 0, 1.0 -> 1
+        out.append(max(0.0, min(1.0, v)))
+    return out
+
+
+def transcribe(wav_path, model, language):
+    """Local faster-whisper on a 16k mono WAV. Returns (words, segments).
+
+    The WAV is passed as a float32 numpy array, NOT as a file path:
+    faster-whisper 1.2.1 decodes file paths through PyAV, and PyAV 19
+    removed the `metadata_errors` kwarg faster-whisper passes, which
+    crashes transcription. Passing decoded PCM bypasses PyAV entirely.
+    """
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError:
+        print("WARN: faster-whisper not installed — transcript disabled.")
+        return [], []
+    print(f"Transcribing locally with faster-whisper model={model} ...")
+    try:
+        import numpy as np
+        with wave.open(str(wav_path), "rb") as w:
+            raw = w.readframes(w.getnframes())
+        audio = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+        m = WhisperModel(model, device="cpu", compute_type="int8")
+        segments, _info = m.transcribe(audio, language=language or None,
+                                       word_timestamps=True, vad_filter=True)
+    except Exception as e:
+        # Honest degraded path: never crash the job for transcription.
+        # Scoring falls back to audio energy only; no captions are faked.
+        print(f"WARN: transcription failed ({type(e).__name__}: {e}) — "
+              "falling back to audio-only scoring, no captions.")
+        return [], []
+    words, segs = [], []
+    for s in segments:
+        segs.append({"start": float(s.start), "end": float(s.end), "text": s.text.strip()})
+        for wd in (s.words or []):
+            words.append({"start": float(wd.start), "end": float(wd.end),
+                          "word": wd.word.strip()})
+    print(f"  transcript: {len(words)} words, {len(segs)} segments")
+    return words, segs
+
+
+def _talking_window(t, end, words, segments):
+    """Score one window for talking-head video (transcript-based).
+
+    Returns (score, reasons). Windows with no speech score 0.
+    """
+    w_in = [w for w in words if t <= w["start"] < end]
+    if not w_in:
+        return 0.0, ["no speech in window"]
+    text = " ".join(w["word"] for w in w_in).lower()
+    seg_in = [s for s in segments if s["start"] < end and s["end"] > t]
+    seg_texts = [s["text"].strip().lower() for s in seg_in if s["text"].strip()]
+    # Hook: the window opens on a strong line or a question.
+    hook = 0.0
+    if seg_texts:
+        first = seg_texts[0]
+        if any(first.startswith(h) for h in HOOK_STARTS):
+            hook = 1.0
+        elif any(first.startswith(q) for q in QUESTION_STARTS):
+            hook = 0.8
+        elif "?" in first:
+            hook = 0.7
+    # Questions anywhere in the window.
+    n_q = sum(1 for s in seg_texts
+              if any(s.startswith(q) for q in QUESTION_STARTS) or "?" in s)
+    q_n = min(1.0, n_q / 2.0)
+    # Quotable lines: short, punchy, with a strong word.
+    n_ql = 0
+    for s in seg_texts:
+        n = len(s.split())
+        if 5 <= n <= 18 and any(wd in s for wd in STRONG_WORDS):
+            n_ql += 1
+    ql_n = min(1.0, n_ql / 2.0)
+    # Emotion / excitement (same phrase list as gameplay).
+    exc = sum(text.count(p) * pts for p, pts in EXCITEMENT.items())
+    exc_n = min(1.0, exc / 6.0)
+    # Story peaks: narrative turns.
+    story = sum(text.count(m) for m in STORY_MARKERS)
+    story_n = min(1.0, story / 3.0)
+    # Clean cut: window starts/ends on a sentence boundary.
+    completeness = 0.0
+    if seg_in:
+        if abs(seg_in[0]["start"] - t) <= 1.5:
+            completeness += 0.5
+        if abs(seg_in[-1]["end"] - end) <= 1.5:
+            completeness += 0.5
+    score = (0.30 * hook + 0.20 * ql_n + 0.15 * q_n + 0.15 * exc_n
+             + 0.10 * story_n + 0.10 * completeness)
+    reasons = []
+    if hook >= 0.8:
+        reasons.append("strong opening line")
+    if ql_n > 0:
+        reasons.append(f"quotable line ({n_ql})")
+    if q_n > 0:
+        reasons.append(f"question ({n_q})")
+    if exc_n > 0:
+        reasons.append(f"emotional speech ({exc} pts)")
+    if story_n > 0:
+        reasons.append(f"story turn ({story})")
+    if completeness >= 1.0:
+        reasons.append("clean cut on sentence boundaries")
+    if not reasons:
+        reasons.append("steady speech")
+    return round(score, 3), reasons
+
+
+def window_scores(duration, energy, words, segments, clip_seconds, mode):
+    step = 10.0
+    windows = []
+    t = 0.0
+    while t < duration:
+        end = min(duration, t + clip_seconds)
+        if end - t < 8:  # too short a tail to be a clip
+            break
+        w_in = [w for w in words if t <= w["start"] < end]
+        excerpt = " ".join(w["word"] for w in w_in)[:220]
+        if mode == "talking":
+            score, reasons = _talking_window(t, end, words, segments)
+            windows.append({"start": t, "end": end, "score": score,
+                            "energy": None, "excitement": None,
+                            "density": None,
+                            "reason": "; ".join(reasons),
+                            "excerpt": excerpt})
+        else:
+            # Gameplay scoring, unchanged from slice 1:
+            # audio energy + excited speech + speech density.
+            e_vals = energy[int(t):int(end)] or [0]
+            e = sum(e_vals) / len(e_vals)
+            text = " ".join(w["word"] for w in w_in).lower()
+            exc = 0
+            for phrase, pts in EXCITEMENT.items():
+                exc += text.count(phrase) * pts
+            exc_n = min(1.0, exc / 6.0)
+            density = min(1.0, (len(w_in) / max(1.0, end - t)) / 2.5)
+            if words:
+                score = 0.5 * e + 0.3 * exc_n + 0.2 * density
+            else:
+                score = e
+            reasons = []
+            if e > 0.55:
+                reasons.append(f"loud moment (energy {e:.2f})")
+            if exc_n > 0:
+                reasons.append(f"excited speech ({exc} pts)")
+            if density > 0.5:
+                reasons.append(f"dense speech ({len(w_in)} words)")
+            if not reasons:
+                reasons.append("steady gameplay")
+            windows.append({"start": t, "end": end, "score": round(score, 3),
+                            "energy": round(e, 3), "excitement": round(exc_n, 3),
+                            "density": round(density, 3),
+                            "reason": "; ".join(reasons),
+                            "excerpt": excerpt})
+        t += step
+    return windows
+
+
+def pick_top(windows, n, clip_seconds):
+    ranked = sorted(windows, key=lambda w: w["score"], reverse=True)
+    picked, taken = [], []
+    min_gap = clip_seconds / 2.0
+    for w in ranked:
+        if all(abs(w["start"] - s) >= min_gap for s in taken):
+            picked.append(w)
+            taken.append(w["start"])
+        if len(picked) >= n:
+            break
+    return sorted(picked, key=lambda w: w["start"])
+
+
+def fmt_ts(sec):
+    sec = max(0.0, sec)
+    h, m = int(sec // 3600), int(sec % 3600 // 60)
+    s = sec % 60
+    return f"{h:02d}:{m:02d}:{s:06.3f}".replace(".", ",")
+
+
+def fmt_mmss(sec):
+    return f"{int(sec // 60):02d}:{int(sec % 60):02d}"
+
+
+def write_clip_srt(words, start, end, path):
+    """Word-level captions for one clip, timestamps relative to clip start."""
+    w_in = [w for w in words if start <= w["start"] < end]
+    if not w_in:
+        return None
+    # group into caption lines: <= 8 words or <= 2.5s
+    lines, cur = [], []
+    for w in w_in:
+        cur.append(w)
+        if len(cur) >= 8 or (cur and w["end"] - cur[0]["start"] > 2.5):
+            lines.append(cur)
+            cur = []
+    if cur:
+        lines.append(cur)
+    out = []
+    for i, grp in enumerate(lines, 1):
+        s = grp[0]["start"] - start
+        e = grp[-1]["end"] - start
+        txt = " ".join(g["word"] for g in grp).strip()
+        out.append(f"{i}\n{fmt_ts(s)} --> {fmt_ts(e)}\n{txt}\n")
+    Path(path).write_text("\n".join(out), encoding="utf-8")
+    return str(path)
+
+
+def draft_copy(w, idx, mode="gameplay"):
+    excerpt = w["excerpt"].strip()
+    if excerpt:
+        frag = excerpt[:60].strip()
+        title = f"{frag}…" if len(excerpt) > 60 else frag
+    else:
+        title = f"Clip — {fmt_mmss(w['start'])}"
+    tags = TALKING_HASHTAGS if mode == "talking" else HASHTAGS
+    desc = (f"Clip ({fmt_mmss(w['start'])}–{fmt_mmss(w['end'])}). "
+            f"{w['reason'].capitalize()}. "
+            + (" ".join(tags)))
+    return title, desc, tags
+
+
+def cut_clip(src, w, out_mp4, srt_path, width, height):
+    vf_parts = []
+    if width and height and width >= height * 9 / 16:
+        vf_parts.append("crop=ih*9/16:ih")
+    else:
+        vf_parts.append("scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280")
+    vf_parts.append("scale=720:1280")
+    vf_parts.append("fps=30")
+    if srt_path:
+        esc = str(srt_path).replace("'", r"\'").replace(":", r"\:")
+        style = ("FontSize=22,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,"
+                 "BorderStyle=1,Outline=2,Alignment=2,MarginV=110")
+        vf_parts.append(f"subtitles='{esc}':force_style='{style}'")
+    vf = ",".join(vf_parts)
+    cmd = ["ffmpeg", "-y", "-v", "error", "-ss", str(round(w["start"], 3)),
+           "-t", str(round(w["end"] - w["start"], 3)), "-i", str(src),
+           "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+           "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(out_mp4)]
+    run(cmd)
+
+
+def download_url(url, dest_dir):
+    """Download a video URL with yt-dlp into a fresh subdir, and return
+    the file yt-dlp actually wrote.
+
+    The subdir matters: input/ also holds other videos (uploads, earlier
+    downloads), and picking "newest file in input/" can silently grab
+    the wrong one — e.g. an upload that landed seconds earlier. A fresh
+    dir per download makes the result unambiguous.
+    """
+    import shutil
+    from datetime import datetime, timezone
+    ytdlp = shutil.which("yt-dlp") or str(Path(__file__).parent / "venv" / "bin" / "yt-dlp")
+    if not Path(ytdlp).exists():
+        raise SystemExit("yt-dlp not found — install it (pip install yt-dlp) or pass a local file.")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    dl_dir = Path(dest_dir) / f"dl-{stamp}"
+    dl_dir.mkdir(parents=True, exist_ok=True)
+    out_tmpl = str(dl_dir / "%(title)s.%(ext)s")
+    run([ytdlp, "-f", "bv*[height<=1080]+ba/b[height<=1080]/b",
+         "--no-playlist", "-o", out_tmpl, url])
+    video = [f for f in sorted(dl_dir.glob("*"))
+             if f.suffix.lower() in (".mp4", ".mkv", ".webm", ".mov")]
+    if not video:
+        raise SystemExit("yt-dlp finished but no video file found.")
+    return video[-1]
+
+
+def main():
+    ap = argparse.ArgumentParser(description="HHS Clips — local clipper (no posting)")
+    ap.add_argument("input", nargs="?", help="local video file")
+    ap.add_argument("--url", help="video URL to download with yt-dlp instead of a local file")
+    ap.add_argument("--out", default=None, help="job output dir (default output/<timestamp>)")
+    ap.add_argument("--num-clips", type=int, default=5)
+    ap.add_argument("--clip-seconds", type=int, default=30)
+    ap.add_argument("--model", default="tiny", help="faster-whisper model: tiny/small/base")
+    ap.add_argument("--language", default="en")
+    ap.add_argument("--mode", default="auto", choices=["gameplay", "talking", "auto"],
+                    help="scoring mode: gameplay (audio spikes + excited speech), "
+                         "talking (transcript hooks/quotes/questions), "
+                         "auto (talking when speech is dense, else gameplay)")
+    ap.add_argument("--i-own-it", action="store_true",
+                    help="REQUIRED: attest you own this video or have rights "
+                         "to post clips from it. Without it the job is refused.")
+    ap.add_argument("--no-whisper", action="store_true",
+                    help="skip transcription; score on audio energy only")
+    args = ap.parse_args()
+
+    # Own-content gate: refuse BEFORE anything is downloaded or cut.
+    if not args.i_own_it:
+        print("Refused: this app is for your own videos only.", file=sys.stderr)
+        print("Re-run with --i-own-it to confirm you own this video or have",
+              file=sys.stderr)
+        print("rights to post clips from it.", file=sys.stderr)
+        raise SystemExit(2)
+
+    root = Path(__file__).resolve().parent
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    attested_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    job_dir = Path(args.out) if args.out else root / "output" / f"job-{stamp}"
+    job_dir.mkdir(parents=True, exist_ok=True)
+    (root / "input").mkdir(exist_ok=True)
+
+    if args.url:
+        print(f"Downloading {args.url} ...")
+        src = download_url(args.url, root / "input")
+    elif args.input:
+        src = Path(args.input)
+        if not src.exists():
+            raise SystemExit(f"input not found: {src}")
+    else:
+        ap.error("give a local video file or --url")
+
+    print(f"Source: {src}")
+    info = probe(src)
+    print(f"  duration={info['duration']:.1f}s {info['width']}x{info['height']} "
+          f"audio={info['has_audio']} video={info['has_video']}")
+    if info["duration"] < 15:
+        raise SystemExit("source too short to clip (<15s)")
+    clip_seconds = min(args.clip_seconds, int(info["duration"]))
+    if info["duration"] < args.clip_seconds:
+        print(f"  note: source shorter than {args.clip_seconds}s, using {clip_seconds}s clips")
+
+    wav = job_dir / "_audio.wav"
+    words, segs = [], []
+    whisper_used = False
+    if info["has_audio"]:
+        extract_wav(src, wav)
+        energy = rms_per_second(wav)
+        if not args.no_whisper:
+            words, segs = transcribe(wav, args.model, args.language)
+            whisper_used = bool(words)
+            if not whisper_used:
+                print("  WARN: transcription produced no words — falling back to audio-only scoring")
+    else:
+        print("  WARN: source has no audio track — scoring will be flat, no captions")
+        energy = [0.0] * int(info["duration"])
+
+    mode = resolve_mode(args.mode, words, info["duration"])
+    mode_fallback = None
+    if mode == "talking" and not words:
+        print("  WARN: talking mode needs a transcript — falling back to gameplay scoring")
+        mode = "gameplay"
+        mode_fallback = "talking requested but no transcript; fell back to gameplay scoring"
+    print(f"  mode: {mode} (requested: {args.mode})"
+          + (f" — {mode_fallback}" if mode_fallback else ""))
+
+    windows = window_scores(info["duration"], energy, words, segs,
+                            clip_seconds, mode)
+    picked = pick_top(windows, args.num_clips, clip_seconds)
+    print(f"Picked {len(picked)} clips (of {len(windows)} windows)")
+
+    clips = []
+    for i, w in enumerate(picked, 1):
+        clip_id = f"clip-{i:02d}"
+        srt = write_clip_srt(words, w["start"], w["end"], job_dir / f"{clip_id}.srt") \
+            if words else None
+        mp4 = job_dir / f"{clip_id}.mp4"
+        print(f"[{i}/{len(picked)}] {fmt_mmss(w['start'])}–{fmt_mmss(w['end'])} "
+              f"score={w['score']} ({w['reason']})")
+        cut_clip(src, w, mp4, srt, info["width"], info["height"])
+        title, desc, tags = draft_copy(w, i, mode)
+        clips.append({
+            "id": clip_id, "job": job_dir.name, "rank": i,
+            "start": round(w["start"], 2), "end": round(w["end"], 2),
+            "duration": round(w["end"] - w["start"], 2),
+            "score": w["score"],
+            "scores": {"energy": w["energy"], "excitement": w["excitement"],
+                       "density": w["density"]},
+            "reason": w["reason"], "excerpt": w["excerpt"],
+            "video": f"{clip_id}.mp4",
+            "srt": f"{clip_id}.srt" if srt else None,
+            "draft_title": title, "draft_description": desc,
+            "draft_hashtags": tags, "status": "pending",
+        })
+
+    # Manifest lists clips best-first (rank = score rank); file names stay
+    # timeline-based (clip-02 can outrank clip-01).
+    clips.sort(key=lambda c: c["score"], reverse=True)
+    for i, c in enumerate(clips, 1):
+        c["rank"] = i
+
+    if mode == "talking":
+        scoring_desc = "talking-head: hooks + quotable lines + questions + emotion + story peaks"
+    elif whisper_used:
+        scoring_desc = "audio energy + excited speech + speech density"
+    else:
+        scoring_desc = "audio energy only (no transcript)"
+    manifest = {
+        "job": job_dir.name, "created_utc": stamp,
+        "source": str(src), "source_duration": round(info["duration"], 2),
+        "clip_seconds": clip_seconds, "num_clips": len(clips),
+        "owned": True, "attested_at": attested_at,
+        "mode_requested": args.mode, "mode": mode,
+        "mode_fallback": mode_fallback,
+        "whisper_model": None if args.no_whisper else args.model,
+        "whisper_used": whisper_used,
+        "scoring": scoring_desc,
+        "clips": clips,
+    }
+    (job_dir / "clips.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    if wav.exists():
+        wav.unlink()
+    print(f"\nDone. Job dir: {job_dir}")
+    print(f"Manifest: {job_dir / 'clips.json'}")
+    print("Next: python3 server.py  — then open http://localhost:8000 to approve clips.")
+    print("Posting is approval-gated (posters/gate.py): only approved clips post.")
+
+
+if __name__ == "__main__":
+    main()

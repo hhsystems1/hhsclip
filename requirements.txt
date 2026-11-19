@@ -1,0 +1,4 @@
+faster-whisper>=1.0.0
+numpy>=1.26
+yt-dlp>=2024.1.1
+# Slice 2 posters use stdlib urllib only — no `requests` needed.

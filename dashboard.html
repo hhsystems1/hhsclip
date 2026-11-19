@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>HHS Clips — Cut. Approve. Post.</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, system-ui, sans-serif; background: #0c0d10; color: #f1efe9; }
+  header { padding: 16px; background: #1f4bff; }
+  header h1 { margin: 0; font-size: 20px; }
+  header p { margin: 4px 0 0; font-size: 14px; opacity: .9; }
+  nav { display: flex; gap: 8px; padding: 12px 12px 0; max-width: 520px; margin: 0 auto; }
+  nav a { flex: 1; text-align: center; text-decoration: none; padding: 12px 4px; border-radius: 10px; border: 1px solid #444; background: #1a1c22; color: #f1efe9; font-size: 15px; font-weight: 700; min-height: 44px; }
+  nav a.on { background: #1f4bff; border-color: #1f4bff; }
+  .banner { margin: 12px; padding: 12px; border: 1px solid #2fbf59; border-radius: 10px; background: #12241a; font-size: 14px; line-height: 1.45; max-width: 520px; margin-left: auto; margin-right: auto; }
+  main { max-width: 520px; margin: 0 auto; padding: 0 12px 40px; }
+  .filters { display: flex; gap: 8px; padding: 0 0 12px; flex-wrap: wrap; }
+  .filters button { flex: 1; min-height: 44px; border-radius: 10px; border: 1px solid #444; background: #1a1c22; color: #f1efe9; font-size: 15px; }
+  .filters button.on { background: #1f4bff; border-color: #1f4bff; }
+  .card { background: #17191f; border: 1px solid #2a2d36; border-radius: 14px; margin-bottom: 16px; overflow: hidden; }
+  .card video { width: 100%; max-height: 62vh; display: block; background: #000; }
+  .body { padding: 14px; }
+  .meta { font-size: 13px; color: #9aa0ae; margin-bottom: 8px; }
+  .title { font-size: 17px; font-weight: 700; margin: 0 0 6px; line-height: 1.3; }
+  .reason { font-size: 14px; color: #c8cdd8; margin: 0 0 8px; line-height: 1.45; }
+  .excerpt { font-size: 13px; color: #9aa0ae; font-style: italic; margin: 0 0 10px; line-height: 1.45; }
+  .badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 13px; font-weight: 700; }
+  .badge.pending, .badge.running { background: #3a2f10; color: #ffd75e; }
+  .badge.approved, .badge.done { background: #12351f; color: #4ade80; }
+  .badge.rejected, .badge.error { background: #3a1414; color: #ff8a8a; }
+  .badge.mode { background: #1a2b5c; color: #9db8ff; }
+  label { display: block; font-size: 13px; color: #9aa0ae; margin: 10px 0 4px; }
+  input, textarea, select { width: 100%; padding: 12px; border-radius: 10px; border: 1px solid #444; background: #0c0d10; color: #f1efe9; font-size: 15px; }
+  textarea { min-height: 64px; resize: vertical; }
+  input[type="file"] { padding: 10px; }
+  input[type="checkbox"] { width: 22px; height: 22px; accent-color: #2fbf59; }
+  .check { display: flex; gap: 10px; align-items: flex-start; font-size: 15px; color: #f1efe9; margin: 14px 0 4px; line-height: 1.4; }
+  .check span { flex: 1; }
+  .actions { display: flex; gap: 10px; margin-top: 14px; }
+  .actions button { flex: 1; min-height: 52px; border: none; border-radius: 12px; font-size: 17px; font-weight: 700; }
+  .approve { background: #2fbf59; color: #06130a; }
+  .reject { background: #3a3d47; color: #f1efe9; }
+  .save { background: #1f4bff; color: #fff; min-height: 48px; width: 100%; border: none; border-radius: 12px; font-size: 16px; font-weight: 700; margin-top: 10px; }
+  .big { background: #2fbf59; color: #06130a; min-height: 56px; width: 100%; border: none; border-radius: 12px; font-size: 18px; font-weight: 700; margin-top: 16px; }
+  .big:disabled { opacity: .5; }
+  .dryrun { margin: 0 0 12px; padding: 12px; border: 1px solid #2a2d36; border-radius: 10px; background: #17191f; font-size: 15px; line-height: 1.4; }
+  .dryrun label { display: flex; gap: 10px; align-items: center; font-size: 15px; color: #f1efe9; margin: 0; }
+  .dryrun #cfg { display: block; margin-top: 8px; font-size: 13px; color: #9aa0ae; }
+  .postsec { margin-top: 14px; border-top: 1px solid #2a2d36; padding-top: 12px; }
+  .postsec h3 { margin: 0 0 8px; font-size: 15px; }
+  .postbtns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .postbtns button { min-height: 48px; border-radius: 10px; border: 1px solid #444; background: #1a1c22; color: #f1efe9; font-size: 15px; font-weight: 700; }
+  .postbtns button.all { grid-column: 1 / -1; background: #1f4bff; border-color: #1f4bff; color: #fff; }
+  .postbtns button:disabled { opacity: .45; }
+  .receipts { margin-top: 10px; font-size: 13px; line-height: 1.5; }
+  .receipts div { padding: 8px 10px; border-radius: 8px; margin-bottom: 6px; background: #0c0d10; border: 1px solid #2a2d36; }
+  .receipts .posted { border-color: #2fbf59; }
+  .receipts .failed, .receipts .not_configured { border-color: #c04545; }
+  .receipts a { color: #7aa5ff; word-break: break-all; }
+  .job { background: #17191f; border: 1px solid #2a2d36; border-radius: 14px; padding: 14px; margin-bottom: 12px; }
+  .job h3 { margin: 0 0 6px; font-size: 16px; word-break: break-all; }
+  .job .src { font-size: 13px; color: #9aa0ae; word-break: break-all; margin: 0 0 8px; line-height: 1.45; }
+  .job .counts { font-size: 14px; margin: 8px 0; }
+  .job button { width: 100%; min-height: 48px; border: none; border-radius: 10px; background: #1f4bff; color: #fff; font-size: 16px; font-weight: 700; }
+  .job button:disabled { opacity: .45; }
+  .progress { background: #17191f; border: 1px solid #2a2d36; border-radius: 12px; padding: 14px; margin-top: 14px; font-size: 14px; line-height: 1.5; }
+  .progress pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; color: #9aa0ae; max-height: 220px; overflow: auto; background: #0c0d10; padding: 10px; border-radius: 8px; }
+  .empty { text-align: center; color: #9aa0ae; padding: 40px 16px; font-size: 16px; line-height: 1.5; }
+  .hint { font-size: 13px; color: #9aa0ae; line-height: 1.45; margin: 6px 0 0; }
+  .toast { position: fixed; left: 12px; right: 12px; bottom: 16px; background: #2fbf59; color: #06130a; font-weight: 700; text-align: center; padding: 14px; border-radius: 12px; display: none; z-index: 10; }
+</style>
+</head>
+<body>
+<header>
+  <h1>✂️ HHS Clips</h1>
+  <p>Cut. Approve. Post. — your own videos only.</p>
+</header>
+<nav id="nav">
+  <a href="#/new" data-v="new">＋ New</a>
+  <a href="#/jobs" data-v="jobs">Jobs</a>
+  <a href="#/queue" data-v="queue">Queue</a>
+</nav>
+<div class="banner"><b>Your videos only.</b> This app clips video you own or have rights to — every job needs that ticked before it runs. <b>Posting is approval-gated:</b> only clips you approved can post, and only when you tap Post. <b>Dry-run is on by default</b> — it logs what <i>would</i> be posted and makes no network calls. YouTube posts as Private, TikTok as Self-only, until those apps pass their audits.</div>
+<main id="main"><div class="empty">Loading…</div></main>
+<div class="toast" id="toast"></div>
+<script>
+let clips = [], jobs = [], clipFilter = 'all', queueJob = null;
+const main = document.getElementById('main');
+const toast = document.getElementById('toast');
+function showToast(msg) { toast.textContent = msg; toast.style.display = 'block'; setTimeout(() => toast.style.display = 'none', 2600); }
+function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch])); }
+function escapeAttr(s) { return escapeHtml(s).replace(/"/g, '&quot;'); }
+function mmss(s) { return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(Math.floor(s % 60)).padStart(2, '0'); }
+function shortSrc(src) { return (src || '').split('/').pop() || src || '(unknown source)'; }
+
+async function loadConfig() {
+  try {
+    const c = await (await fetch('/api/posting/config')).json();
+    const names = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram', facebook: 'Facebook' };
+    return 'Set up in .env: ' + Object.entries(c.platforms).map(([k, v]) => names[k] + ' ' + (v ? '✓' : '—')).join(' · ') + ' — unconfigured platforms dry-run fine, live posts fail cleanly.';
+  } catch (e) { return ''; }
+}
+
+/* ---------- New job ---------- */
+function renderNew() {
+  main.innerHTML = `
+    <h2 style="font-size:18px;margin:16px 0 4px">Start a new clip job</h2>
+    <p class="hint">Drop in a long video you own — podcast, talk, webinar, testimonial, demo, sermon, or a stream VOD. The app cuts the best short vertical moments for you to approve.</p>
+    <label>Video file (from this device)</label>
+    <input type="file" id="f-file" accept=".mp4,.mkv,.webm,.mov,video/*">
+    <p class="hint">…or paste a video link instead:</p>
+    <label>Video link (YouTube / Twitch / Kick VOD)</label>
+    <input type="url" id="f-url" placeholder="https://www.youtube.com/watch?v=…">
+    <label>Scoring mode</label>
+    <select id="f-mode">
+      <option value="auto" selected>Auto — talking-head when speech is dense, gameplay when it isn't</option>
+      <option value="talking">Talking-head — hooks, quotable lines, questions</option>
+      <option value="gameplay">Gameplay — loud moments + excited speech</option>
+    </select>
+    <label>Transcription model</label>
+    <select id="f-model">
+      <option value="tiny" selected>tiny — fastest (good on this machine)</option>
+      <option value="small">small — more accurate (better on a Mac mini)</option>
+      <option value="base">base — most accurate, slowest</option>
+    </select>
+    <label class="check"><input type="checkbox" id="f-owned"><span>I own this video or have rights to post clips from it. This app is for your own videos only.</span></label>
+    <button class="big" id="f-run">▶ Cut clips</button>
+    <div id="f-progress"></div>`;
+  document.getElementById('f-run').onclick = startJob;
+}
+
+async function startJob() {
+  const file = document.getElementById('f-file').files[0];
+  const url = document.getElementById('f-url').value.trim();
+  const mode = document.getElementById('f-mode').value;
+  const model = document.getElementById('f-model').value;
+  const owned = document.getElementById('f-owned').checked;
+  const prog = document.getElementById('f-progress');
+  const btn = document.getElementById('f-run');
+  if (!owned) { showToast('Tick the ownership box first — this app is for your own videos only.'); return; }
+  if (!file && !url) { showToast('Choose a file or paste a link.'); return; }
+  btn.disabled = true;
+  prog.innerHTML = '<div class="progress">Starting…</div>';
+  let r;
+  try {
+    if (file) {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('mode', mode);
+      fd.append('model', model);
+      fd.append('owned', 'true');
+      r = await fetch('/api/jobs', { method: 'POST', body: fd });
+    } else {
+      r = await fetch('/api/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, mode, model, owned: true }) });
+    }
+  } catch (e) { prog.innerHTML = '<div class="progress">Could not reach the server. Is it running?</div>'; btn.disabled = false; return; }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { prog.innerHTML = '<div class="progress">❌ ' + escapeHtml(j.error || 'Job refused') + '</div>'; btn.disabled = false; return; }
+  const jobId = j.job;
+  prog.innerHTML = `<div class="progress"><b>Clipping…</b> Job <code>${escapeHtml(jobId)}</code> is running. This takes a few minutes for a long video — keep this page open.<br><pre id="f-log">…</pre></div>`;
+  const poll = setInterval(async () => {
+    try {
+      const log = await (await fetch(`/api/jobs/${jobId}/log`)).text();
+      const pre = document.getElementById('f-log');
+      if (pre) { pre.textContent = log.slice(-2000) || '…'; pre.scrollTop = pre.scrollHeight; }
+      const st = await (await fetch(`/api/jobs/${jobId}`)).json();
+      if (st.status === 'done') {
+        clearInterval(poll);
+        prog.innerHTML = `<div class="progress"><b>✅ Done — ${st.clip_count} clips ready.</b><br><br><a href="#/job/${escapeAttr(jobId)}" style="color:#7aa5ff;font-weight:700">Open the approval queue →</a></div>`;
+        btn.disabled = false;
+      } else if (st.status === 'error') {
+        clearInterval(poll);
+        prog.innerHTML = '<div class="progress">❌ Job failed: ' + escapeHtml(st.error || 'see the log') + '</div>';
+        btn.disabled = false;
+      }
+    } catch (e) { /* keep polling */ }
+  }, 3000);
+}
+
+/* ---------- Jobs list ---------- */
+async function renderJobs() {
+  const r = await fetch('/api/jobs');
+  const j = await r.json();
+  jobs = j.jobs || [];
+  if (!jobs.length) {
+    main.innerHTML = '<div class="empty">No jobs yet.<br><a href="#/new" style="color:#7aa5ff;font-weight:700">Start your first clip job →</a></div>';
+    return;
+  }
+  main.innerHTML = '<h2 style="font-size:18px;margin:16px 0 12px">Jobs</h2>' + jobs.map(job => `
+    <div class="job">
+      <h3>${escapeHtml(shortSrc(job.source))}</h3>
+      <p class="src">${escapeHtml(job.source)}</p>
+      <span class="badge ${job.status}">${escapeHtml(job.status.toUpperCase())}</span>
+      <span class="badge mode">${escapeHtml(job.mode || job.mode_requested || '—')}</span>
+      ${job.owned ? '<span class="badge approved">✓ OWNED</span>' : '<span class="badge rejected">NO ATTESTATION</span>'}
+      <div class="counts">${job.clip_count} clips · ${job.approved} approved · ${job.pending} pending · ${job.rejected} rejected</div>
+      ${job.error ? `<p class="hint" style="color:#ff8a8a">⚠ ${escapeHtml(job.error)}</p>` : ''}
+      <p class="hint">${escapeHtml(job.job)} · ${escapeHtml(job.created_utc || '')}</p>
+      <button ${job.status === 'done' ? '' : 'disabled'} onclick="location.hash='#/job/${escapeAttr(job.job)}'">Open approval queue →</button>
+    </div>`).join('');
+}
+
+/* ---------- Approval queue ---------- */
+async function loadClips() {
+  const r = await fetch('/api/clips');
+  const j = await r.json();
+  clips = j.clips || [];
+}
+async function renderQueue(jobId) {
+  queueJob = jobId || null;
+  await loadClips();
+  const cfgText = await loadConfig();
+  const shown = clips.filter(c => (!queueJob || c.job === queueJob) && (clipFilter === 'all' || (clipFilter === 'ready' ? c.status === 'approved' : c.status === clipFilter)));
+  const title = queueJob ? `Queue — ${escapeHtml(shortSrc(shown[0] ? shown[0].source : queueJob))}` : 'Approval queue';
+  main.innerHTML = `
+    <h2 style="font-size:18px;margin:16px 0 4px">${title}</h2>
+    <div class="dryrun"><label><input type="checkbox" id="dryrun" checked> Dry-run mode (no posting, just a receipt)</label><span id="cfg">${escapeHtml(cfgText)}</span></div>
+    <div class="filters" id="filters">
+      <button data-f="all" class="${clipFilter === 'all' ? 'on' : ''}">All</button>
+      <button data-f="pending" class="${clipFilter === 'pending' ? 'on' : ''}">Pending</button>
+      <button data-f="approved" class="${clipFilter === 'approved' ? 'on' : ''}">Approved</button>
+      <button data-f="ready" class="${clipFilter === 'ready' ? 'on' : ''}">Ready to post</button>
+      <button data-f="rejected" class="${clipFilter === 'rejected' ? 'on' : ''}">Rejected</button>
+    </div>
+    <div id="list"></div>`;
+  document.getElementById('filters').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    clipFilter = b.dataset.f;
+    document.querySelectorAll('#filters button').forEach(x => x.classList.toggle('on', x === b));
+    renderQueue(queueJob);
+  });
+  const list = document.getElementById('list');
+  if (!shown.length) { list.innerHTML = '<div class="empty">No clips here yet.<br><a href="#/new" style="color:#7aa5ff;font-weight:700">Start a clip job →</a></div>'; return; }
+  shown.forEach(c => {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `
+      <video src="${c.video_url}" controls playsinline preload="metadata"></video>
+      <div class="body">
+        <div class="meta">${c.job} · ${mmss(c.start)}–${mmss(c.end)} · ${c.duration}s · score ${c.score} · ${c.mode ? escapeHtml(c.mode) + ' mode' : ''}</div>
+        <span class="badge ${c.status}">${c.status.toUpperCase()}</span>
+        <p class="title">${escapeHtml(c.draft_title)}</p>
+        <p class="reason">${escapeHtml(c.reason)}</p>
+        ${c.excerpt ? `<p class="excerpt">“${escapeHtml(c.excerpt)}”</p>` : ''}
+        <label>Title (editable)</label>
+        <input class="t" value="${escapeAttr(c.draft_title)}">
+        <label>Description (editable)</label>
+        <textarea class="d">${escapeHtml(c.draft_description || '')}</textarea>
+        <button class="save">Save title / description</button>
+        <div class="actions">
+          <button class="approve">✓ Approve</button>
+          <button class="reject">✕ Reject</button>
+        </div>
+        ${c.status === 'approved' ? `
+        <div class="postsec">
+          <h3>Post this clip</h3>
+          <div class="postbtns">
+            <button data-p="youtube">▶ YouTube</button>
+            <button data-p="tiktok">♪ TikTok</button>
+            <button data-p="instagram">◎ Instagram</button>
+            <button data-p="facebook">f Facebook</button>
+            <button class="all" data-p="all">Post to all 4</button>
+          </div>
+        </div>` : `<div class="postsec"><h3>Posting</h3><div style="font-size:14px;color:#9aa0ae">Approve this clip first — only approved clips can post.</div></div>`}
+        ${c.posts && c.posts.length ? `<div class="receipts">${c.posts.slice().reverse().map(p => `
+          <div class="${p.status}"><b>${p.platform}</b> — ${p.status} · ${escapeHtml(p.privacy || '')} · ${escapeHtml(p.timestamp_utc || '')}
+          ${p.url ? `<br><a href="${escapeAttr(p.url)}" target="_blank" rel="noopener">${escapeHtml(p.url)}</a>` : ''}
+          ${p.external_id && !p.url ? `<br>id: ${escapeHtml(p.external_id)}` : ''}
+          ${p.error ? `<br>⚠ ${escapeHtml(p.error)}` : ''}
+          ${p.note ? `<br>${escapeHtml(p.note)}` : ''}</div>`).join('')}</div>` : ''}
+      </div>`;
+    card.querySelector('.approve').onclick = () => setStatus(c, 'approved');
+    card.querySelector('.reject').onclick = () => setStatus(c, 'rejected');
+    card.querySelector('.save').onclick = async () => {
+      const r = await fetch(`/api/clips/${c.id}/edit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ draft_title: card.querySelector('.t').value, draft_description: card.querySelector('.d').value, job: c.job }) });
+      if (r.ok) { c.draft_title = card.querySelector('.t').value; showToast('Saved'); } else showToast('Save failed');
+    };
+    card.querySelectorAll('.postbtns button').forEach(b => {
+      b.onclick = () => postClip(c, b.dataset.p, b);
+    });
+    list.appendChild(card);
+  });
+}
+async function postClip(c, platform, btn) {
+  const dryRun = document.getElementById('dryrun').checked;
+  if (!dryRun && !confirm(`Post "${c.draft_title}" to ${platform === 'all' ? 'ALL FOUR platforms' : platform} for real? YouTube = Private, TikTok = Self-only by default.`)) return;
+  btn.disabled = true;
+  const r = await fetch(`/api/clips/${c.id}/post`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ platforms: [platform], live: !dryRun, job: c.job }) });
+  const j = await r.json().catch(() => ({}));
+  btn.disabled = false;
+  if (!r.ok) { showToast(j.error || 'Post refused'); return; }
+  (j.receipts || []).forEach(rec => { c.posts = c.posts || []; c.posts.push(rec); });
+  const done = (j.receipts || []).map(x => x.platform + ': ' + x.status).join(', ');
+  showToast(dryRun ? 'Dry-run receipt saved — nothing posted. ' + done : 'Posted: ' + done);
+  renderQueue(queueJob);
+}
+async function setStatus(c, status) {
+  const r = await fetch(`/api/clips/${c.id}/status`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status, job: c.job }) });
+  if (r.ok) { c.status = status; showToast(status === 'approved' ? 'Approved — Post buttons are now live below' : 'Rejected'); renderQueue(queueJob); }
+  else showToast('Failed — is the server running?');
+}
+
+/* ---------- Router ---------- */
+function route() {
+  const h = location.hash || '#/jobs';
+  document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('on', h.startsWith('#/' + a.dataset.v) || (a.dataset.v === 'jobs' && h.startsWith('#/job/'))));
+  if (h === '#/new' || h === '#/') { renderNew(); return; }
+  if (h === '#/jobs') { renderJobs(); return; }
+  const m = h.match(/^#\/job\/([A-Za-z0-9._-]+)$/);
+  if (m) { renderQueue(m[1]); return; }
+  renderQueue(null); // #/queue — all clips
+}
+window.addEventListener('hashchange', route);
+route();
+</script>
+</body>
+</html>
