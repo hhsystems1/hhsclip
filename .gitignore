@@ -29,3 +29,6 @@ models/
 *.pem
 *token*.json
 credentials*.json
+# Accounts + session secret — password hashes and the signing key
+accounts.json
+.session-secret

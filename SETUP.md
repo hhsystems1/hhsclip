@@ -181,3 +181,37 @@ fix the setup, tap Post again.
   poster will fail cleanly with the platform's error).
 - No public posting on YouTube/TikTok until their audits pass —
   the code cannot override that, and it never pretends otherwise.
+
+## Docker (optional)
+
+Docker packages the app so it runs the same everywhere — it does
+NOT put the app on the internet by itself. For a public link you
+still need the Cloudflare Tunnel (see TUNNEL.md / GO_LIVE.md) on
+the mini, or you run this same setup on a VPS and point a DNS
+record at it.
+
+On the Mac mini (Docker Desktop is free for personal and small
+business use):
+
+```bash
+cd hhsclip
+docker compose up -d --build
+```
+
+Then open http://localhost:8000 (or http://<mini-LAN-IP>:8000 from
+your phone on the same Wi-Fi). Accounts are made inside the
+container and survive rebuilds:
+
+```bash
+docker compose exec app python3 accounts.py add <you> owner
+docker compose exec app python3 accounts.py add shayne reviewer tech4health
+```
+
+Jobs, uploads, accounts, and downloaded transcription models all
+live in Docker volumes, so `docker compose down` and rebuilding
+the image do not wipe them. `docker compose down -v` DOES wipe
+them — don't run that unless you mean it.
+
+Note: the image has not been built yet — there is no Docker on
+this build machine, so the first real `docker compose build` is
+on the mini (or the VPS).

@@ -1,0 +1,51 @@
+# HHS Clips — one command to run it
+#   docker compose up -d --build
+# then open http://localhost:8000 (or http://<mini-LAN-IP>:8000 from your phone).
+#
+# Docker does NOT put the app on the internet by itself — it just
+# packages the app so it runs the same everywhere. For a public link,
+# still use the Cloudflare Tunnel (TUNNEL.md / GO_LIVE.md) on the
+# mini, or run this same file on a VPS and point a DNS record at it
+# (see VPS_SETUP.md). On a VPS, also start the Caddy profile for
+# automatic HTTPS: docker compose --profile vps up -d --build
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    volumes:
+      # Jobs, uploads, and review exports — survive rebuilds.
+      - hhsclip-output:/app/output
+      - hhsclip-input:/app/input
+      - hhsclip-jobs:/app/jobs
+      # Accounts + session secret (restored/saved by entrypoint.sh).
+      - hhsclip-state:/state
+      # faster-whisper model downloads (~75 MB per model) — cached
+      # so the first clip after a rebuild doesn't re-download.
+      - hhsclip-models:/root/.cache
+
+  # VPS only (profile "vps"): Caddy in front of the app, with
+  # automatic HTTPS via Let's Encrypt. Not used on the mini — the
+  # tunnel handles TLS there.
+  caddy:
+    image: caddy:2
+    profiles: ["vps"]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - hhsclip-caddy:/data
+    depends_on:
+      - app
+    restart: unless-stopped
+
+volumes:
+  hhsclip-output:
+  hhsclip-input:
+  hhsclip-jobs:
+  hhsclip-state:
+  hhsclip-models:
+  hhsclip-caddy:

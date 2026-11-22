@@ -1,0 +1,5 @@
+# HHS Clips on a VPS — Caddy reverse proxy with automatic HTTPS.
+# If you use a different hostname, change it here (and in VPS_SETUP.md).
+clips.helpinghandssystems.com {
+	reverse_proxy app:8000
+}
