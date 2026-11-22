@@ -58,8 +58,10 @@ python3 -m venv venv
 ./venv/bin/pip install -r requirements.txt
 ```
 
-No API keys. No accounts. The first transcription downloads the
-Whisper model (~75 MB for `tiny`) into the local Hugging Face cache.
+No API keys. No accounts until you create one — sign-in stays off
+until the first account exists (see "Client sign-in" below). The
+first transcription downloads the Whisper model (~75 MB for `tiny`)
+into the local Hugging Face cache.
 
 ## Run the app
 
@@ -67,7 +69,8 @@ Whisper model (~75 MB for `tiny`) into the local Hugging Face cache.
 python3 server.py
 # open http://localhost:8000 on this machine,
 # or run with --host 0.0.0.0 and open http://<this-machine's-LAN-IP>:8000
-# on your phone (same Wi-Fi). Single-tenant local app — no accounts in v1.
+# on your phone (same Wi-Fi). Sign-in is off until the owner creates
+# the first account — see "Client sign-in" below.
 ```
 
 - **＋ New** — upload a file or paste a link, pick a mode and model,
@@ -137,6 +140,89 @@ ready-to-deploy folder — `index.html` there is a copy of
 that copy if `review.html` changes. Exported folders live under
 `review/` and are git-ignored, except `review/demo/` which is
 committed on purpose.
+
+## Client sign-in — a client reviewer signs in on the mini
+
+The app can run for HHS only, on the Mac mini, and a client reviewer
+signs in to see just their own clips waiting for approval — no
+review link, no posting, nothing else of HHS's.
+
+**The rule, plainly: sign-in is OFF until the owner creates the
+first account.** With no `accounts.json`, the app behaves exactly as
+it always has — no login, local use unchanged. The moment the first
+account exists, every page and API route requires a signed-in
+session, except the login page itself and the static review files
+(`review.html`, `review/demo/`, `index.html` — those stay public as
+designed). Turn sign-in on BEFORE any public link goes live (see
+[TUNNEL.md](TUNNEL.md)).
+
+**First run, in order** (on the machine running `server.py`):
+
+```bash
+# 1. Your owner account (sees everything)
+python3 accounts.py add brendon owner
+#    (prompts for a password — typed blind, never echoed, never saved
+#    in plaintext; only a PBKDF2 hash lands in accounts.json)
+
+# 2. The reviewer's account — a reviewer always carries a client slug
+python3 accounts.py add shayne reviewer tech4health
+
+# 3. Restart is NOT needed — the server notices the accounts file
+#    at once. Sign-in is now on.
+```
+
+```bash
+python3 accounts.py list     # who exists (no passwords shown)
+python3 accounts.py passwd shayne   # reset a password
+python3 accounts.py remove shayne   # remove an account
+# Removing the LAST account turns sign-in back OFF.
+```
+
+**4. Tag a job to the client.** In the app, open **Jobs** and use
+**Tag client** on a finished job (owner only), or:
+
+```bash
+curl -X POST http://localhost:8000/api/jobs/<job-id>/client \
+  -H 'Content-Type: application/json' -d '{"client": "tech4health"}'
+```
+
+An empty client (`""`) clears the tag. A reviewer only ever sees
+jobs whose tag equals their account's client — asking for another
+client's job, clip, or video file gets a 404, never the data.
+
+**5. Put it online** — see [TUNNEL.md](TUNNEL.md) (free Cloudflare
+Tunnel from the mini). Then send the reviewer the public link plus
+their username and password (send the password separately — a
+different message, or in person).
+
+**What the reviewer sees:** after signing in they land on `/review` —
+only their client's jobs, each clip with its vertical video, title
+and reason, an **Approve** button and an **Ask for changes** button
+(the same 7 quick reasons as the static review page, plus a required
+note). Their decision updates the clip's real status in the app's
+own data — approved clips can then be posted by the owner, and a
+change request shows up on the owner's queue card with the reason
+and note. Reviewers cannot create jobs, edit titles, post, or see
+any other client. Owners use the dashboard as before, plus a
+"Signed in as …" row and Sign out.
+
+**What stays public:** the login page, the Netlify front door
+(`index.html`), and the static review pages (`review.html`,
+`review/demo/`). Everything else needs a session.
+
+**Known limits in this slice:**
+- Sessions last 30 days (cookie, HttpOnly, SameSite=Lax, HMAC-signed
+  with a server secret from `HHS_SESSION_SECRET`, or a generated
+  `.session-secret` file if that env var is absent — never a
+  hardcoded default). Sign out clears it.
+- One shared password per account, no password-reset email — the
+  owner resets with `accounts.py passwd`.
+- No lockout after failed logins — keep the public link unlisted and
+  the passwords strong. (Cloudflare Access in front of the tunnel
+  would add that later, if wanted.)
+- Two roles only: `owner` (everything) and `reviewer` (their
+  client's jobs). No per-clip permissions, no audit log beyond the
+  `reviewed_by` / `reviewed_at` stored on each clip.
 
 ## Run it on your phone (Termux)
 
@@ -232,7 +318,7 @@ all 4, a "Ready to post" filter, and their receipts.
 (booleans only — never a secret). Full per-platform setup is in
 [SETUP.md](SETUP.md).
 
-Tests: `python3 -m unittest discover -s tests -v` — 47 tests, mocked
+Tests: `python3 -m unittest discover -s tests -v` — 65 tests, mocked
 HTTP only (gate refusals, dry-run makes no network calls, receipt
 shape, privacy defaults, not-configured handling, a mocked YouTube
 resumable-upload pass, mode selection, talking-head scoring, the
@@ -242,8 +328,10 @@ test touches a real platform.
 
 ## What is NOT in v1
 
-- **No accounts / multi-user.** Single-tenant local app. Don't expose
-  it to the public internet; bind to localhost, or your own LAN.
+- **Accounts exist, but only two roles.** Owner (everything) and
+  reviewer (their client's jobs). No per-clip permissions, no audit
+  log beyond `reviewed_by` / `reviewed_at` on each clip. Don't expose
+  the app to the public internet without sign-in switched on first.
 - **No hosted processing.** Video work runs on the machine the app
   runs on (your Mac mini / local machine).
 - **No Rivryn link.** No sharing clips into Rivryn's social planner

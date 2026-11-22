@@ -1,0 +1,12 @@
+venv/
+__pycache__/
+*.pyc
+output/
+input/
+jobs/
+models/
+review/
+.git/
+accounts.json
+.session-secret
+*.log
