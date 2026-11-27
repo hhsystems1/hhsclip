@@ -537,6 +537,116 @@ def pick_top(windows, n, clip_seconds):
     return sorted(picked, key=lambda w: w["start"])
 
 
+# --- Scoring handoff packet (Slice 1: browser-model clip scoring) ---
+#
+# The mini keeps doing the video work; the browser model does the
+# judging. The packet is everything the model needs to judge a
+# candidate, and nothing it doesn't: the full window transcript, the
+# sentence or two around it, the clipper's existing signals, and the
+# rule score + reason. No model, network, or API call lives here —
+# this slice only packages data the clipper already produces.
+# Slice 2 (browser scoring) reads scoring-packet.json.
+SCORING_PACKET_VERSION = 1
+# Prompt template version. Slice 2 defines the scoring prompt; the
+# version travels with the packet so a later re-score uses the same
+# wording the original ranking used.
+SCORING_PROMPT_VERSION = "v1"
+SCORING_PACKET_FILENAME = "scoring-packet.json"
+SCORING_SHORTLIST_SIZE = 25
+SCORING_CONTEXT_SEGMENTS = 2
+
+
+def _window_transcript(words, start, end):
+    """All words spoken inside a window, in order (the full transcript,
+    not the 220-char truncated excerpt clips.json carries)."""
+    return " ".join(w["word"] for w in words if start <= w["start"] < end)
+
+
+def _context_lines(segments, start, end, count=SCORING_CONTEXT_SEGMENTS):
+    """The sentence or two just before / just after a window, from the
+    transcript segments, so the judge can tell whether the moment
+    stands on its own. Only fully-before segments (end <= start) feed
+    context_before and fully-after segments (start >= end) feed
+    context_after; a segment straddling a boundary is left out — its
+    in-window words are already in the transcript."""
+    before = [s["text"].strip() for s in segments
+              if s["end"] <= start and s["text"].strip()]
+    after = [s["text"].strip() for s in segments
+             if s["start"] >= end and s["text"].strip()]
+    return " ".join(before[-count:]), " ".join(after[:count])
+
+
+def build_scoring_packet(*, job, created_utc, source, source_duration,
+                         clip_seconds, mode_requested, mode, scoring,
+                         windows, words, segments, mode_fallback=None,
+                         whisper_model=None, whisper_used=False,
+                         title=None,
+                         shortlist_size=SCORING_SHORTLIST_SIZE):
+    """Build the scoring handoff packet for one job. Pure function.
+
+    The shortlist is pick_top's non-overlap top set (picks cannot
+    overlap by more than half a clip — the same rule that picks the
+    clips), capped at shortlist_size and ranked best rule score first.
+    Windows below the shortlist are NOT in the packet; they were never
+    written to disk by the clipper (only picked clips land in
+    clips.json), so nothing is deleted — the counts record what was
+    left out. The title is included only when the job has one; it is
+    never invented.
+    """
+    shortlist = pick_top(windows, shortlist_size, clip_seconds)
+    ranked = sorted(shortlist, key=lambda w: w["score"], reverse=True)
+    candidates = []
+    for i, w in enumerate(ranked, 1):
+        before, after = _context_lines(segments, w["start"], w["end"])
+        candidates.append({
+            "rank": i,
+            "start": round(w["start"], 2),
+            "end": round(w["end"], 2),
+            "duration": round(w["end"] - w["start"], 2),
+            "transcript": _window_transcript(words, w["start"], w["end"]),
+            "context_before": before,
+            "context_after": after,
+            "excerpt": w["excerpt"],
+            "scores": {"energy": w["energy"], "excitement": w["excitement"],
+                       "density": w["density"]},
+            "rule_score": w["score"],
+            "rule_reason": w["reason"],
+            "mode": mode,
+        })
+    packet = {
+        "packet_version": SCORING_PACKET_VERSION,
+        "prompt_version": SCORING_PROMPT_VERSION,
+        "job": job,
+        "created_utc": created_utc,
+        "source": str(source),
+        "source_duration": round(source_duration, 2),
+        "clip_seconds": clip_seconds,
+        "mode_requested": mode_requested,
+        "mode": mode,
+        "mode_fallback": mode_fallback,
+        "whisper_model": whisper_model,
+        "whisper_used": whisper_used,
+        "scoring": scoring,
+        "counts": {
+            "total_windows": len(windows),
+            "shortlist_size": len(candidates),
+            "rule_cutoff": (min(c["rule_score"] for c in candidates)
+                            if candidates else None),
+        },
+        "candidates": candidates,
+    }
+    if title:
+        packet["title"] = title
+    return packet
+
+
+def write_scoring_packet(job_dir, packet):
+    """Write scoring-packet.json next to clips.json. Returns the path."""
+    path = Path(job_dir) / SCORING_PACKET_FILENAME
+    path.write_text(json.dumps(packet, indent=2), encoding="utf-8")
+    return path
+
+
 def fmt_ts(sec):
     sec = max(0.0, sec)
     h, m = int(sec // 3600), int(sec % 3600 // 60)
@@ -662,6 +772,9 @@ def main():
                          "to post clips from it. Without it the job is refused.")
     ap.add_argument("--no-whisper", action="store_true",
                     help="skip transcription; score on audio energy only")
+    ap.add_argument("--title", default=None,
+                    help="stream title/topic for the scoring packet "
+                         "(optional; omitted from the packet when not given)")
     args = ap.parse_args()
 
     # Own-content gate: refuse BEFORE anything is downloaded or cut.
@@ -801,6 +914,17 @@ def main():
         "clips": clips,
     }
     (job_dir / "clips.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    packet = build_scoring_packet(
+        job=job_dir.name, created_utc=stamp, source=src,
+        source_duration=info["duration"], clip_seconds=clip_seconds,
+        mode_requested=args.mode, mode=mode, scoring=scoring_desc,
+        windows=windows, words=words, segments=segs,
+        mode_fallback=mode_fallback,
+        whisper_model=None if args.no_whisper else args.model,
+        whisper_used=whisper_used, title=args.title)
+    packet_path = write_scoring_packet(job_dir, packet)
+    print(f"Scoring packet: {packet_path} "
+          f"({len(packet['candidates'])} candidates of {len(windows)} windows)")
     if wav.exists():
         wav.unlink()
     print(f"\nDone. Job dir: {job_dir}")
